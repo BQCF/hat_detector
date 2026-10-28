@@ -1,0 +1,35 @@
+# ---------- 数据与训练产物（体积大 / 有许可限制，不入库） ----------
+data/
+runs/
+models/
+_archive/
+*.pt
+*.onnx
+*.engine
+*.torchscript
+capture_*.jpg
+*.mp4
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- 日志与临时文件 ----------
+*.log
+*.log.err
+*.json.tmp
+~$*
+
+# ---------- 编辑器 / 系统 ----------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

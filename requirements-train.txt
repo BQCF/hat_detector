@@ -1,0 +1,8 @@
+# 训练 / GPU 推理依赖
+# 本机实测组合：torch 2.6.0+cu124 · torchvision 0.21.0+cu124 · ultralytics 8.4.142
+# 安装顺序（Windows / Linux 通用）：
+#   pip install -r requirements-train.txt      # 先装 CUDA 版 torch
+#   pip install -r requirements.txt            # 再装其余依赖
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124

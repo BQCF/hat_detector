@@ -1,0 +1,9 @@
+# data.yaml
+path: ./data/dataset          # 数据集根目录（相对路径）
+train: images/train           # 训练集图片路径
+val: images/val               # 验证集图片路径
+test: images/test             # 测试集（可选，没有就删掉这行）
+
+nc: 3                         # 类别数量（根据你的数据集改）
+# head = 未戴安全帽的头部（裸头），helmet = 安全帽，person = 人
+names: ['head', 'helmet', 'person']  # 类别名称（必须和标注一致）

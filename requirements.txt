@@ -1,0 +1,9 @@
+# 运行依赖（网页版 / 命令行演示）
+# 已验证环境：Windows 11 · Python 3.12.10 · CUDA 12.4 · 显卡 RTX 4060 Laptop 8GB
+# 安装：pip install -r requirements.txt
+# 注意：ultralytics 会连带安装 torch；若要用 GPU，先按 requirements-train.txt 装 CUDA 版 torch。
+ultralytics==8.4.142
+gradio==6.26.0
+opencv-python==5.0.0.93
+numpy==2.5.2
+PyYAML==6.0.3
