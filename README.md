@@ -5,21 +5,29 @@
 
 ![精度与数据](docs/images/01_quality_and_data.png)
 
-## 指标（验证集 883 张 / 3462 个实例）
+## 指标
 
-| 类别 | 训练集实例 | 验证集实例 | Precision | Recall | mAP50 | mAP50-95 |
-| --- | --- | --- | --- | --- | --- | --- |
-| head（未戴安全帽） | 4874 | 896 | 0.842 | 0.974 | **0.972** | 0.675 |
-| helmet（安全帽） | 14884 | 2484 | 0.895 | 0.974 | **0.984** | 0.678 |
-| person（人） | 473 | 82 | 0.068 | 0.049 | 0.056 | 0.034 |
-| **全部** | 20231 | 3462 | 0.602 | 0.666 | 0.671 | 0.462 |
+当前模型是 **head / helmet 二分类**（`yolov8n` 微调 50 轮，`imgsz=640`，`batch=16`，耗时约 1.6 小时，RTX 4060 Laptop 8GB）：
 
-训练配置：`yolov8n` + 50 epochs + `imgsz=640` + `batch=16`，耗时约 1.69 小时（RTX 4060 Laptop 8GB）。
+| 类别 | 训练集实例 | Precision | Recall | mAP50 | mAP50-95 |
+| --- | --- | --- | --- | --- | --- |
+| head（未戴安全帽） | 4874 | 0.9304 | 0.9554 | **0.9709** | 0.6764 |
+| helmet（安全帽） | 14884 | 0.9642 | 0.9428 | **0.9842** | 0.6823 |
+| **总体** | 19758 | 0.9473 | 0.9491 | **0.9775** | 0.6793 |
 
-> ⚠️ **关于 person 类**：它只占训练实例的 2.3%，且验证集的 82 个真值只分布在 25 张图里。
-> 实测把阈值降到 0.05 也只能检出 25 个、最高置信度 0.287，在默认阈值 0.25 下几乎全部被过滤。
-> 也就是说 `mAP50 = 0.671` 这个总分是被 person 类（(0.972+0.984+0.056)/3）拉低的，head/helmet 两类的真实水平是 0.97 / 0.98。
-> 下一版将改为 **head/helmet 二分类**（告警逻辑本来就只看 `head`），详见文末「优化路线」。
+*（val 集 883 张 / 3380 个实例）*
+
+**测试集**（883 张 / 3286 个实例）：head 0.9637 / helmet 0.9765 / **总体 mAP50 0.9701**（mAP50-95 0.6692），
+与 val 只差 **0.74 个百分点**，泛化正常。
+
+![二分类重训对比](docs/images/03_2cls_vs_3cls.png)
+
+> 📄 完整对比（含被替换掉的旧 3 类模型）见 [docs/report_2cls.md](docs/report_2cls.md)。
+>
+> **为什么不是 3 类（head / helmet / person）**：person 全集只有 615 个实例（占 2.3%），
+> 旧模型在测试集上对它的**召回率是 0**（60 个真值一个都没检出），把总体 mAP50 从 0.977 拉到 0.66。
+> 而 head / helmet 两类的水平重训前后没变——去 person 不是为了变强，而是为了让指标说实话。
+> 告警逻辑本来就只看 `head`，二分类才是这个项目该有的形态。
 
 ## 环境要求
 
@@ -53,33 +61,49 @@ data/dataset/
 └─ labels/{train,val,test}/   # 与图片同名的 .txt 标注
 ```
 
-`data.yaml` 已配好 3 个类别与路径。放好后先跑一次数据集体检：
+`data.yaml` 是 3 类配置（head / helmet / person），`data2cls.yaml` 是当前使用的二分类配置。
+放好数据后先体检一次：
 
 ```bash
-python scripts/check_dataset.py
-python scripts/check_dataset.py --json runs/dataset_check.json   # 顺便落盘一份报告
+python scripts/check_dataset.py                      # 体检 3 类数据集
+python scripts/check_dataset.py --data data2cls.yaml # 体检二分类数据集
 ```
 
 体检内容：图片/标注配对、类别分布、坐标是否越界、框宽高是否为 0、类别 id 是否越界、
 图片能否解码、尺寸是否过小、是否有重复图片、train/val 是否混入同一张图。
 
-## 训练
+### 派生二分类数据集
+
+只有 3 类数据集时，一条命令就能派生出 head/helmet 二分类版本（图片走硬链接，不额外占磁盘）：
 
 ```bash
-python train.py                 # 默认 50 轮，输出到 runs/detect/hat_detector/
-python train.py --epochs 100
-python train.py --data coco8.yaml   # 用官方小数据集先跑通流程
+python scripts/make_2class.py              # 生成 data/dataset_2cls/ + data2cls.yaml
+python scripts/make_2class.py --copy       # 改为复制图片
+python scripts/make_2class.py --keep head  # 只保留某一类
 ```
 
-> 注意：`train.py` 目前用了 `exist_ok=True`，同名实验目录会被**覆盖**，需要对比实验时请先备份 `runs/`。
+## 训练
+
+实验目录自动带时间戳（`runs/detect/<名称>_<YYYYmmdd_HHMMSS>/`），**不会覆盖历史结果**：
+
+```bash
+python train.py --data data2cls.yaml --name hat_2cls   # 当前推荐：二分类
+python train.py                                        # 用 data.yaml 训练 3 类
+python train.py --epochs 100 --cache ram               # 多轮 + 图片缓存提速
+python train.py --model yolov11n.pt --cos-lr           # 换模型 / 余弦退火学习率
+python train.py --data coco8.yaml --no-check           # 官方小数据集先跑通流程
+```
 
 ## 评估
 
 ```bash
-python evaluate.py              # 在验证集上评估 best.pt
+python evaluate.py --split val                                # 验证集（自动取最新的 best.pt）
+python evaluate.py --split test                               # 测试集
+python evaluate.py --data data2cls.yaml --split test --json runs/eval_test.json
+python evaluate.py --model runs/detect/xxx/weights/best.pt    # 指定模型
 ```
 
-输出 mAP@0.5、mAP@0.5:0.95、Precision、Recall。测试集（883 张 / 3346 个实例）目前还没有接入评估流程。
+输出分类指标表（Precision / Recall / mAP50 / mAP50-95），`--json` 可落盘。
 
 ## 使用
 
@@ -121,12 +145,16 @@ hat_detector/
 ├─ app.py                 # Gradio 网页版（图片检测 + 浏览器摄像头实时检测）
 ├─ demo.py                # 轻量命令行/实时演示（超简单版）
 ├─ demo_opencv.py         # OpenCV 实时窗口（异步读帧 + FPS/HUD + 连续帧报警）
-├─ train.py               # YOLOv8 微调训练
-├─ evaluate.py            # 验证集指标评估
-├─ data.yaml              # 数据集配置（3 类：head / helmet / person）
+├─ train.py               # YOLOv8 微调训练（实验目录带时间戳，不覆盖历史结果）
+├─ evaluate.py            # val / test 指标评估，可落盘 JSON
+├─ data.yaml              # 3 类数据集配置（head / helmet / person）
+├─ data2cls.yaml          # 二分类数据集配置（head / helmet，当前使用）
 ├─ scripts/
-│  └─ check_dataset.py    # 数据集体检
-├─ docs/images/           # README 用图
+│  ├─ check_dataset.py    # 数据集体检
+│  └─ make_2class.py      # 从 3 类派生二分类数据集
+├─ docs/
+│  ├─ report_2cls.md      # 二分类重训对比报告
+│  └─ images/             # README 与报告用图
 ├─ requirements.txt       # 运行依赖
 ├─ requirements-train.txt # 训练 / GPU 依赖
 ├─ data/                  # 数据集（不入库）
@@ -136,10 +164,11 @@ hat_detector/
 ## 常见问题
 
 **Q：模型文件在哪？**
-`runs/detect/hat_detector/weights/best.pt`（约 6.2MB，3.0M 参数）。仓库不提供权重，需自行训练，或把权重放进上述路径。
+每次训练会在 `runs/detect/<名称>_<时间戳>/weights/best.pt` 生成一份（约 6.2MB，3.0M 参数）。
+仓库不提供权重，需自行训练；`evaluate.py` 不指定 `--model` 时会自动取最新的那份。
 
 **Q：报 `找不到训练好的模型`？**
-先 `python train.py` 完成训练，或从别处拷贝 `best.pt` 到 `runs/detect/hat_detector/weights/`。
+先 `python train.py --data data2cls.yaml --name hat_2cls` 完成训练。
 
 **Q：torch 报 CUDA 不可用？**
 说明装的是 CPU 版 torch：`pip uninstall torch torchvision` 后按 `requirements-train.txt` 安装 CUDA 版。
@@ -149,15 +178,13 @@ hat_detector/
 
 ## 已知限制
 
-- person 类基本不可用（见上文），界面里的 person 计数不可信；
 - 网页版实时链路约 5 FPS；
 - 报警只在本地窗口版的 HUD 与终端提示，没有声音、抓拍留证与事件记录；
-- 没有桌面程序，必须开浏览器 + 端口访问；
-- 测试集尚未接入评估。
+- 没有桌面程序，必须开浏览器 + 端口访问。
 
 ## 优化路线
 
-1. **模型**：改为 head/helmet 二分类重训，补测试集评估，训练脚本加实验命名与增强参数；
+1. ✅ **模型**（已完成）：head/helmet 二分类重训、测试集接入评估、训练脚本带时间戳实验目录 —— 见 [docs/report_2cls.md](docs/report_2cls.md)；
 2. **桌面程序**：PySide6 三线程管道（采集 / 推理 / UI），支持摄像头、视频、图片、RTSP，报警做闭环（连续帧去抖 + 声音 + 抓拍 + CSV 事件）；
 3. **部署**：导出 ONNX 用 onnxruntime 推理，PyInstaller 打包成双击可用的 exe（目标 ≤120MB，免 Python 环境）；
 4. **增强**：ROI 区域、ByteTrack 去重、多路摄像头、事件导出 Excel。

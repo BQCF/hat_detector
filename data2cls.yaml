@@ -1,0 +1,8 @@
+# 由 scripts/make_2class.py 自动生成，勿手改
+path: ./data/dataset_2cls
+train: images/train
+val: images/val
+test: images/test
+
+nc: 2
+names: ['head', 'helmet']
