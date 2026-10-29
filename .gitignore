@@ -3,6 +3,7 @@ data/
 runs/
 models/
 _archive/
+captures/
 *.pt
 *.onnx
 *.engine

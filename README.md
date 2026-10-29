@@ -107,7 +107,49 @@ python evaluate.py --model runs/detect/xxx/weights/best.pt    # 指定模型
 
 ## 使用
 
-### 网页版（推荐演示用）
+### 桌面程序（推荐）
+
+![桌面程序界面](docs/images/04_desktop_ui.png)
+
+```bash
+python desktop.py                    # 打开界面，再点按钮选采集源
+python desktop.py --source 0         # 直接开摄像头 0 并自动开始检测
+python desktop.py --source demo.mp4  # 直接播视频文件
+python desktop.py --source photo.jpg # 检测单张图片
+python desktop.py --source rtsp://192.168.1.10:554/stream
+```
+
+功能：
+
+- 四种采集源：**摄像头 / 视频文件 / 图片 / RTSP 流**；
+- 实时画面上叠加检测框（head 红框 = 未戴安全帽，helmet 蓝框 = 已佩戴）；
+- 右栏显示运行状态、帧率、单帧耗时、本帧目标数、各类计数；
+- **报警闭环**：连续 N 帧确认（默认 3 帧，去掉单帧误报）→ 状态变红 + 声音提示 + 自动抓拍 + 事件写入 CSV；
+- 报警事件列表**双击即可打开对应抓拍**；
+- 「截图」保存当前帧，「事件表」直接定位到 `captures/events.csv`；
+- 「设置」里调模型路径、置信度阈值、报警灵敏度、抓拍目录，写回 `configs/default.yaml`；
+- 快捷键：`F5` 开始、`F6` 停止、`Ctrl+S` 截图。
+
+报警产物默认存在 `captures/`（已在 .gitignore 中忽略）：
+
+```
+captures/
+├─ 20261029_180229_001.jpg   # 报警时的抓拍
+├─ ...
+└─ events.csv                # 事件表：时间 / 类别 / 置信度 / 数量 / 抓拍路径
+```
+
+### 无界面模式
+
+```bash
+python cli.py --type image --source photo.jpg          # 单张图片
+python cli.py --type video --source demo.mp4 --frames 200
+python cli.py --type camera --source 0 --show          # --show 弹 OpenCV 窗口
+python cli.py --type rtsp  --source rtsp://192.168.1.10/stream
+python cli.py --type image --source photo.jpg --no-sound   # 报警不发声
+```
+
+### 网页版（远程查看）
 
 ```bash
 python app.py                                  # 默认 http://127.0.0.1:7860
@@ -142,6 +184,20 @@ python demo.py --source 0 --conf 0.5        # 轻量版实时检测
 
 ```
 hat_detector/
+├─ desktop.py             # ★ 桌面程序入口（PySide6）
+├─ cli.py                 # ★ 无界面模式（给无显示器机器 / 脚本调用）
+├─ core/                  # ★ 纯逻辑层，不依赖 Qt
+│  ├─ config.py           #   配置读写（configs/default.yaml）
+│  ├─ detector.py         #   模型加载与推理、画框
+│  ├─ sources.py          #   摄像头 / 视频 / 图片 / RTSP 统一采集接口
+│  ├─ pipeline.py         #   采集 + 推理双线程管道（丢旧帧保证实时）
+│  ├─ postprocess.py      #   跨类别去重、分类计数
+│  └─ alarm.py            #   报警去抖 + 抓拍 + 声音 + 事件 CSV
+├─ ui/                    # ★ PySide6 界面层
+│  ├─ main_window.py      #   主窗口（工具栏 / 画面 / 信息栏 / 状态栏）
+│  ├─ video_view.py       #   等比缩放的视频控件
+│  ├─ side_panel.py       #   状态、性能、计数、事件列表
+│  └─ settings_dialog.py  #   设置面板
 ├─ app.py                 # Gradio 网页版（图片检测 + 浏览器摄像头实时检测）
 ├─ demo.py                # 轻量命令行/实时演示（超简单版）
 ├─ demo_opencv.py         # OpenCV 实时窗口（异步读帧 + FPS/HUD + 连续帧报警）
@@ -155,9 +211,10 @@ hat_detector/
 ├─ docs/
 │  ├─ report_2cls.md      # 二分类重训对比报告
 │  └─ images/             # README 与报告用图
-├─ requirements.txt       # 运行依赖
+├─ requirements.txt       # 运行依赖（含 PySide6）
 ├─ requirements-train.txt # 训练 / GPU 依赖
 ├─ data/                  # 数据集（不入库）
+├─ captures/              # 报警抓拍与事件表（不入库）
 └─ runs/                  # 训练与评估产物、模型权重（不入库）
 ```
 
@@ -178,14 +235,14 @@ hat_detector/
 
 ## 已知限制
 
-- 网页版实时链路约 5 FPS；
-- 报警只在本地窗口版的 HUD 与终端提示，没有声音、抓拍留证与事件记录；
-- 没有桌面程序，必须开浏览器 + 端口访问。
+- 网页版实时链路约 5 FPS（桌面版本地检测约 100 FPS）；
+- 多路摄像头、ROI 危险区域、按跟踪去重还没做；
+- 还没打包成 exe，运行需要 Python 环境。
 
 ## 优化路线
 
 1. ✅ **模型**（已完成）：head/helmet 二分类重训、测试集接入评估、训练脚本带时间戳实验目录 —— 见 [docs/report_2cls.md](docs/report_2cls.md)；
-2. **桌面程序**：PySide6 三线程管道（采集 / 推理 / UI），支持摄像头、视频、图片、RTSP，报警做闭环（连续帧去抖 + 声音 + 抓拍 + CSV 事件）；
+2. ✅ **桌面程序**（已完成）：PySide6 界面 + `core` 纯逻辑层（采集 / 推理双线程），支持摄像头、视频、图片、RTSP，报警闭环（连续帧去抖 + 声音 + 抓拍 + CSV 事件），设置面板写回 `configs/default.yaml`；
 3. **部署**：导出 ONNX 用 onnxruntime 推理，PyInstaller 打包成双击可用的 exe（目标 ≤120MB，免 Python 环境）；
 4. **增强**：ROI 区域、ByteTrack 去重、多路摄像头、事件导出 Excel。
 
