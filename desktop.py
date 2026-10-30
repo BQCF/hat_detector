@@ -17,6 +17,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from core.config import load_config
+from ui import theme
 from ui.main_window import MainWindow
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -49,14 +50,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("安全帽佩戴检测系统")
     app.setFont(QFont("Microsoft YaHei", 10))
-    app.setStyleSheet("""
-        QMainWindow { background:#161b22; }
-        QToolBar { background:#0d1117; border:none; padding:6px; spacing:6px; }
-        QToolBar QToolButton { color:#e6edf3; padding:6px 12px; border-radius:6px; }
-        QToolBar QToolButton:hover { background:#21262d; }
-        QStatusBar { background:#0d1117; color:#8b949e; }
-        QMessageBox { background:#161b22; }
-    """)
+    # 全局套用设计令牌（对话框等顶层窗口也能跟着变成暗色）
+    app.setStyleSheet(theme.stylesheet())
 
     win = MainWindow(cfg)
     win.show()

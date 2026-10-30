@@ -19,7 +19,7 @@ class VideoView(QLabel):
         self.setMinimumSize(480, 360)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet(
-            "background:#0d1117; color:#8b949e; border:1px solid #30363d;"
+            "background:#000000; color:#5A6473; border:none;"
             "border-radius:8px; font-size:15px;")
         self.setText(self._placeholder)
 
