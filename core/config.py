@@ -63,6 +63,8 @@ class AppConfig:
     alarm: AlarmConfig = field(default_factory=AlarmConfig)
     roi: RoiConfig = field(default_factory=RoiConfig)
     track: TrackConfig = field(default_factory=TrackConfig)
+    # 多路摄像头：每个元素是 {"name": 显示名, "source_type": camera/rtsp/video/image, "source_value": 序号或地址}
+    cameras: list = field(default_factory=list)
 
     def resolve(self, p: str | Path) -> Path:
         """把配置里的相对路径按项目根目录解析成绝对路径。"""

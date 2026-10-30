@@ -1,12 +1,7 @@
 # ui/main_window.py
-# 主窗口（现代科技风暗黑模式）
-# 布局：左右 7:3；左侧纯黑视频卡片；右侧三张卡片（运行控制 / 实时性能 / 报警事件）。
-#
-# 第二步：已接入 core 的检测管线——
-#   Detector 加载模型 → create_source 打开采集源 → InferPipeline 双线程跑推理，
-#   主线程用 QTimer 轮询最新结果刷新画面与指标（轮询比每帧发 Qt 信号更稳，
-#   30FPS 下不会把事件队列打爆）。
-#   报警事件流与弹窗留在第三步。
+# 主窗口（现代科技风暗黑模式）。单路 / 多路共用一套 Stream 模型：
+#   单路：右侧 SourceSegments 选源，开始后大画面直接显示；
+#   多路：左侧频道列表（缩略图+状态），点击切大画面，每路各跑一个模型，后台并行。
 from __future__ import annotations
 
 import subprocess
@@ -15,21 +10,20 @@ from pathlib import Path
 
 import cv2
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
-from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
-                               QInputDialog, QLabel, QMainWindow, QMessageBox,
-                               QPushButton, QSizePolicy, QVBoxLayout, QWidget)
+from PySide6.QtGui import QAction, QDesktopServices, QImage, QKeySequence, QPixmap
+from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog,
+                               QLabel, QMainWindow, QMessageBox, QPushButton,
+                               QSizePolicy, QVBoxLayout, QWidget)
 
-from core.alarm import AlarmEvent, AlarmManager
+from core.alarm import AlarmEvent
 from core.config import AppConfig, save_config
-from core.detector import Detector
-from core.pipeline import InferPipeline, PipelineResult
+from core.pipeline import PipelineResult
 from core.report import export_events_excel
 from core.roi import RoiRegion
-from core.sources import create_source
-from core.tracker import IouTracker
+from core.stream import Stream
 
 from . import theme
+from .channel_panel import ChannelPanel
 from .roi_editor import RoiEditor
 from .settings_dialog import SettingsDialog
 from .widgets import (Card, Divider, EventStream, MetricRow, SourceSegments,
@@ -37,13 +31,13 @@ from .widgets import (Card, Divider, EventStream, MetricRow, SourceSegments,
 
 
 class _AlarmBridge(QObject):
-    """报警回调发生在推理线程里，用信号排队回界面线程再动控件。"""
+    """报警回调在推理线程里触发，用信号排队回界面线程。载荷 = (来源名, AlarmEvent)。"""
 
     triggered = Signal(object)
 
 
 class MainWindow(QMainWindow):
-    """桌面主窗口：负责启停采集/推理，并把结果刷到界面上。"""
+    """桌面主窗口：管理一路或多路 Stream，把结果刷到界面上。"""
 
     SOURCES = [
         ("camera", "摄像头"),
@@ -56,25 +50,27 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.cfg = cfg
         self._running = False
-        self.detector: Detector | None = None
-        self.pipeline: InferPipeline | None = None
+        self._multi = bool(cfg.cameras)          # 多路模式：configs 里有 cameras 列表
+        self._streams: dict[str, Stream] = {}
+        self._selected: str | None = None
         self._last: PipelineResult | None = None
         self._model_label = "—"
         self._alarming = False
+        self._tick_no = 0
 
-        # 报警回调在推理线程里触发 → 用信号排队回界面线程
         self._alarm_bridge = _AlarmBridge()
         self._alarm_bridge.triggered.connect(self._on_alarm)
 
         self.setWindowTitle("安全帽佩戴检测系统")
-        self.resize(1380, 830)
-        self.setMinimumSize(1120, 700)
+        self.resize(1440, 840)
+        self.setMinimumSize(1180, 700)
         self.setStyleSheet(theme.stylesheet())
 
         self._build_ui()
         self._roi_editor = RoiEditor(self.video)
         self._roi_editor.finished.connect(self._on_roi_finished)
         self._roi_editor.cancelled.connect(lambda: None)
+        self._populate_channels()
         self._bind_shortcuts()
         self._sync_state()
         self._update_source_hint()
@@ -92,6 +88,12 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(theme.PAD, theme.PAD, theme.PAD, theme.PAD)
         outer.setSpacing(theme.GAP)
 
+        if self._multi:
+            self.channels = ChannelPanel()
+            self.channels.selected.connect(self._select_stream)
+            self.channels.remove_requested.connect(self._remove_stream)
+            outer.addWidget(self.channels, 0)
+
         self.video = VideoArea()
         outer.addWidget(self.video, 7)
 
@@ -108,10 +110,9 @@ class MainWindow(QMainWindow):
         col.addWidget(self._build_event_card(), 1)
         outer.addWidget(right, 3)
 
-        # 浮层提示（挂在视频区上，右上角浮出）
         self._toast = Toast(self.video)
         self.event_stream.opened.connect(self._open_image)
-        self.video.installEventFilter(self)      # 视频区尺寸变化时重新定位浮层
+        self.video.installEventFilter(self)
         self._place_toast()
 
     # ---------------------------------------------------- 卡片 A：控制与状态
@@ -151,17 +152,31 @@ class MainWindow(QMainWindow):
 
         card.body.addWidget(Divider())
 
-        src_label = QLabel("选择数据源")
-        src_label.setObjectName("MetricLabel")
-        card.body.addWidget(src_label)
-
-        self.sources = SourceSegments(self.SOURCES, current=self.cfg.source_type)
-        card.body.addWidget(self.sources)
-
-        self.source_hint = QLabel("")
-        self.source_hint.setObjectName("CardHint")
-        self.source_hint.setWordWrap(True)
-        card.body.addWidget(self.source_hint)
+        if self._multi:
+            add_row = QHBoxLayout()
+            add_row.setSpacing(8)
+            self.btn_add_cam = QPushButton("＋ 摄像头")
+            self.btn_add_rtsp = QPushButton("＋ RTSP")
+            for b in (self.btn_add_cam, self.btn_add_rtsp):
+                b.setObjectName("SegBtn")
+                b.setCursor(Qt.CursorShape.PointingHandCursor)
+                add_row.addWidget(b)
+            card.body.addLayout(add_row)
+            self.source_hint = QLabel("")
+            self.source_hint.setObjectName("CardHint")
+            self.source_hint.setWordWrap(True)
+            card.body.addWidget(self.source_hint)
+            self.sources = None
+        else:
+            src_label = QLabel("选择数据源")
+            src_label.setObjectName("MetricLabel")
+            card.body.addWidget(src_label)
+            self.sources = SourceSegments(self.SOURCES, current=self.cfg.source_type)
+            card.body.addWidget(self.sources)
+            self.source_hint = QLabel("")
+            self.source_hint.setObjectName("CardHint")
+            self.source_hint.setWordWrap(True)
+            card.body.addWidget(self.source_hint)
 
         ghost_row = QHBoxLayout()
         ghost_row.setContentsMargins(0, 0, 0, 0)
@@ -182,7 +197,11 @@ class MainWindow(QMainWindow):
 
         self.btn_start.clicked.connect(self._start)
         self.btn_stop.clicked.connect(lambda: self._stop())
-        self.sources.changed.connect(self._on_source_changed)
+        if self.sources is not None:
+            self.sources.changed.connect(self._on_source_changed)
+        else:
+            self.btn_add_cam.clicked.connect(self._add_camera)
+            self.btn_add_rtsp.clicked.connect(self._add_rtsp)
         self.btn_shot.clicked.connect(self._screenshot)
         self.btn_events.clicked.connect(self._open_events)
         self.btn_export.clicked.connect(self._export_excel)
@@ -192,7 +211,6 @@ class MainWindow(QMainWindow):
         return card
 
     def _bind_shortcuts(self) -> None:
-        """F5 开始 / F6 停止 / Ctrl+S 截图。"""
         for seq, slot in (("F5", self._start),
                           ("F6", lambda: self._stop()),
                           ("Ctrl+S", self._screenshot)):
@@ -201,13 +219,11 @@ class MainWindow(QMainWindow):
             act.triggered.connect(slot)
             self.addAction(act)
 
-    # ---------------------------------------------------- 卡片 B：实时性能
     def _build_perf_card(self) -> Card:
         card = Card("实时性能监测", "待机")
         self.metric_fps = MetricRow("帧率", "--", "FPS")
         self.metric_ms = MetricRow("单帧耗时", "--", "ms")
         self.metric_det = MetricRow("本帧目标", "--", "个")
-
         card.body.addWidget(self.metric_fps)
         card.body.addWidget(Divider())
         card.body.addWidget(self.metric_ms)
@@ -215,7 +231,6 @@ class MainWindow(QMainWindow):
         card.body.addWidget(self.metric_det)
         return card
 
-    # ---------------------------------------------------- 卡片 C：报警事件
     def _build_event_card(self) -> Card:
         card = Card("报警事件", "双击查看截图")
         self.event_stream = EventStream()
@@ -223,6 +238,60 @@ class MainWindow(QMainWindow):
                                         QSizePolicy.Policy.Expanding)
         card.body.addWidget(self.event_stream, 1)
         return card
+
+    # ============================================================ 频道（多路）
+    def _populate_channels(self) -> None:
+        if not self._multi:
+            return
+        for c in self.cfg.cameras:
+            self.channels.add_channel(c.get("name") or "")
+        if self.cfg.cameras:
+            self._selected = self.cfg.cameras[0].get("name") or ""
+
+    def _select_stream(self, name: str) -> None:
+        self._selected = name
+        self._last = None
+
+    def _add_camera(self) -> None:
+        idx, ok = QInputDialog.getInt(self, "添加摄像头", "摄像头序号（0 通常是内置摄像头）：", 0, 0, 8)
+        if not ok:
+            return
+        self.cfg.cameras.append({"name": f"摄像头 {idx}",
+                                 "source_type": "camera", "source_value": str(idx)})
+        self._commit_cameras()
+
+    def _add_rtsp(self) -> None:
+        text, ok = QInputDialog.getText(self, "添加 RTSP", "流地址：", text="rtsp://")
+        if not ok or not text.strip():
+            return
+        default_name = f"RTSP {len(self.cfg.cameras) + 1}"
+        name, _ = QInputDialog.getText(self, "给这路起名", "名称：", text=default_name)
+        self.cfg.cameras.append({"name": (name.strip() or default_name),
+                                 "source_type": "rtsp", "source_value": text.strip()})
+        self._commit_cameras()
+
+    def _commit_cameras(self) -> None:
+        save_config(self.cfg)
+        spec = self.cfg.cameras[-1]
+        name = spec.get("name") or ""
+        self.channels.add_channel(name)
+        self._selected = self._selected or name
+        if self._running:                      # 正在跑就立刻把这路也启动
+            s = Stream(spec, self.cfg, self._alarm_bridge.triggered.emit)
+            self._streams[s.name] = s
+            s.start()
+
+    def _remove_stream(self, name: str) -> None:
+        self.cfg.cameras = [c for c in self.cfg.cameras if c.get("name") != name]
+        save_config(self.cfg)
+        if name in self._streams:
+            self._streams[name].stop()
+            del self._streams[name]
+        self.channels.remove_channel(name)
+        if self._selected == name:
+            self._selected = next(iter(self._streams), None)
+        if self._streams and not self._selected:
+            self._selected = next(iter(self._streams))
 
     # ============================================================ 状态
     def _sync_state(self) -> None:
@@ -233,23 +302,22 @@ class MainWindow(QMainWindow):
             color = theme.DANGER
         elif running:
             self.status_dot.set_state("run")
-            self.status_text.setText("当前状态：运行中")
+            n = len(self._streams)
+            self.status_text.setText(f"当前状态：运行中{(' · ' + str(n) + ' 路') if n > 1 else ''}")
             color = theme.OK
         else:
             self.status_dot.set_state("stop")
             self.status_text.setText("当前状态：已停止")
             color = theme.TEXT_DIM
-        self.status_text.setStyleSheet(
-            f"font-size:14px;font-weight:600;color:{color};")
+        self.status_text.setStyleSheet(f"font-size:14px;font-weight:600;color:{color};")
         self.btn_start.setEnabled(not running)
         self.btn_stop.setEnabled(running)
         self.video.set_running(running)
 
     def _set_loading(self, text: str) -> None:
         self.status_text.setText(text)
-        self.status_text.setStyleSheet(
-            f"font-size:14px;font-weight:600;color:{theme.ACCENT};")
-        QApplication.processEvents()          # 让"加载中"先画出来再阻塞
+        self.status_text.setStyleSheet(f"font-size:14px;font-weight:600;color:{theme.ACCENT};")
+        QApplication.processEvents()
 
     def _reset_metrics(self) -> None:
         self.metric_fps.set_value("--")
@@ -258,8 +326,24 @@ class MainWindow(QMainWindow):
         if self.card_perf.hint_label:
             self.card_perf.hint_label.setText("待机")
 
-    # ============================================================ 数据源
+    def _update_channel_status(self) -> None:
+        if not self._multi:
+            return
+        for name, s in self._streams.items():
+            if s.error:
+                self.channels.set_status(name, "stop", "启动失败")
+            elif s.running and s.alarm is not None and s.alarm.is_alarming:
+                self.channels.set_status(name, "alarm", "报警中")
+            elif s.running:
+                self.channels.set_status(name, "run", "运行中")
+            else:
+                self.channels.set_status(name, "stop", "已停止")
+
+    # ============================================================ 数据源（单路）
     def _update_source_hint(self) -> None:
+        if self._multi:
+            self.source_hint.setText(f"{len(self.cfg.cameras)} 路 · 点击左侧频道切换大画面")
+            return
         kind = self.cfg.source_type
         value = str(self.cfg.source_value or "")
         if kind == "camera":
@@ -282,16 +366,13 @@ class MainWindow(QMainWindow):
         return True
 
     def _pick_source(self, kind: str) -> bool:
-        """弹窗让用户选具体的源；取消返回 False。"""
         if kind == "camera":
             cur = int(self.cfg.source_value) if str(self.cfg.source_value).isdigit() else 0
-            idx, ok = QInputDialog.getInt(
-                self, "选择摄像头", "摄像头序号（0 通常是内置摄像头）：", cur, 0, 8)
+            idx, ok = QInputDialog.getInt(self, "选择摄像头", "摄像头序号（0 通常是内置摄像头）：", cur, 0, 8)
             if not ok:
                 return False
             self.cfg.source_value = str(idx)
             return True
-
         if kind in ("video", "image"):
             if kind == "video":
                 filt = "视频文件 (*.mp4 *.avi *.mkv *.mov *.webm);;所有文件 (*)"
@@ -304,7 +385,6 @@ class MainWindow(QMainWindow):
                 return False
             self.cfg.source_value = path
             return True
-
         if kind == "rtsp":
             cur = self.cfg.source_value if str(self.cfg.source_value).startswith("rtsp://") else "rtsp://"
             text, ok = QInputDialog.getText(self, "RTSP 摄像头", "流地址：", text=cur)
@@ -324,56 +404,62 @@ class MainWindow(QMainWindow):
         if self._pick_source(kind):
             self.cfg.source_type = kind
         else:
-            self.sources.set_current(prev)     # 用户取消 → 退回原来的选项
+            self.sources.set_current(prev)
         self._update_source_hint()
 
     # ============================================================ 启动 / 停止
+    def _stream_specs(self) -> list[dict]:
+        if self._multi:
+            return [dict(c) for c in self.cfg.cameras]
+        return [{"name": self._source_name(),
+                 "source_type": self.cfg.source_type,
+                 "source_value": self.cfg.source_value}]
+
+    def _source_name(self) -> str:
+        kind = self.cfg.source_type
+        val = str(self.cfg.source_value or "")
+        if kind == "camera":
+            return f"摄像头 {val}"
+        if kind == "rtsp":
+            return "RTSP"
+        return Path(val).name or kind
+
     def _start(self) -> None:
         if self._running:
             return
-
-        kind = self.cfg.source_type
-        # 视频/图片/RTSP 还没选好具体源时，先弹窗选
-        if not self._source_ready(kind):
-            if not self._pick_source(kind):
-                return
-            self._update_source_hint()
+        if not self._multi:
+            kind = self.cfg.source_type
+            if not self._source_ready(kind):
+                if not self._pick_source(kind):
+                    return
+                self._update_source_hint()
 
         self._teardown(keep_view=False)
         self._set_loading("当前状态：加载模型中…")
 
-        try:
-            self.detector = Detector(
-                model_path=self.cfg.model_path, device=self.cfg.device,
-                conf=self.cfg.conf, iou=self.cfg.iou, imgsz=self.cfg.imgsz,
-                max_det=self.cfg.max_det, backend=self.cfg.backend)
-            source = create_source(kind, str(self.cfg.source_value),
-                                   self.cfg.camera_width, self.cfg.camera_height,
-                                   self.cfg.video_loop)
-            source.open()
-            alarm = AlarmManager(self.cfg.alarm,
-                                 on_alarm=self._alarm_bridge.triggered.emit)
-            tracker = None
-            if self.cfg.track.enabled:
-                tracker = IouTracker(self.cfg.track.iou_thr, self.cfg.track.max_age)
-            roi = RoiRegion.from_config(self.cfg.roi)
-            self.pipeline = InferPipeline(self.detector, source, alarm=alarm, dedup=True,
-                                          tracker=tracker, roi=roi)
-            self.pipeline.start()
-        except Exception as exc:                            # noqa: BLE001
-            self.detector = None
-            self.pipeline = None
+        for spec in self._stream_specs():
+            s = Stream(spec, self.cfg, self._alarm_bridge.triggered.emit)
+            self._streams[s.name] = s
+        for s in self._streams.values():
+            s.start()
+
+        if self._streams and all(s.error for s in self._streams.values()):
+            first = next(iter(self._streams.values()))
+            self._teardown(keep_view=False)
             self._sync_state()
-            QMessageBox.warning(self, "启动失败",
-                                f"{type(exc).__name__}\n\n{exc}")
+            QMessageBox.warning(self, "启动失败", f"{first.error}")
             return
 
-        self._model_label = self.detector.model_path.name
         self._running = True
+        self._model_label = next((s.detector.model_path.name
+                                  for s in self._streams.values() if s.detector), "—")
+        self._selected = self._selected or next(iter(self._streams), None)
         self._sync_state()
+        self._update_channel_status()
         if self.card_control.hint_label:
             self.card_control.hint_label.setText(
-                f"{self.detector.backend_name} · {self.detector.device}")
+                next((s.detector.backend_name + " · " + s.detector.device
+                      for s in self._streams.values() if s.detector), "—"))
         if self.card_perf.hint_label:
             self.card_perf.hint_label.setText("实时")
         self.video.set_tags(fps=0, model=self._model_label)
@@ -383,16 +469,15 @@ class MainWindow(QMainWindow):
         self._teardown(keep_view=False)
 
     def _teardown(self, keep_view: bool = False) -> None:
-        """停采集/推理并复位界面；keep_view=True 时保留最后一帧（图片结果用）。"""
         self.timer.stop()
-        if self.pipeline is not None:
-            self.pipeline.stop()
-            self.pipeline = None
-        self.detector = None
+        for s in self._streams.values():
+            s.stop()
+        self._streams.clear()
         self._running = False
         self._alarming = False
         self._toast.hide()
         self._sync_state()
+        self._update_channel_status()
         if not keep_view:
             self._last = None
             self.video.reset_view()
@@ -400,36 +485,42 @@ class MainWindow(QMainWindow):
 
     # ============================================================ 每帧刷新
     def _tick(self) -> None:
-        if self.pipeline is None:
+        if not self._streams:
             return
+        self._tick_no += 1
+        sel = self._streams.get(self._selected)
 
-        if self.pipeline.error:
-            err = self.pipeline.error
-            self._teardown(keep_view=False)
-            QMessageBox.warning(self, "检测出错", err)
-            return
+        for name, s in self._streams.items():
+            res = s.latest()
+            if res is None:
+                if s.finished() and s is sel and not self._multi:
+                    self._teardown(keep_view=True)
+                    self.status_text.setText("当前状态：已结束（处理完毕）")
+                    self.status_text.setStyleSheet(
+                        f"font-size:14px;font-weight:600;color:{theme.TEXT_DIM};")
+                continue
+            if self._multi and self._tick_no % 6 == 0:
+                self.channels.set_thumbnail(name, self._frame_to_pixmap(res.frame))
+            if s is sel:
+                if self._last is None or res.timestamp != self._last.timestamp:
+                    self._last = res
+                    self.video.set_frame(res.frame)
+                    self.metric_fps.set_value(f"{res.fps:.0f}" if res.fps > 0 else "--")
+                    self.metric_ms.set_value(f"{res.infer_ms:.1f}")
+                    self.metric_det.set_value(str(len(res.detections)))
+                    self.video.set_tags(fps=res.fps, model=self._model_label,
+                                        alarming=res.alarming)
+                    if bool(res.alarming) != self._alarming:
+                        self._alarming = bool(res.alarming)
+                        self._sync_state()
 
-        res = self.pipeline.latest()
-        if res is not None and (self._last is None or res.timestamp != self._last.timestamp):
-            self._last = res
-            self.video.set_frame(res.frame)
-            # 单张图片只跑一帧，没有吞吐量可算，显示 -- 更准确
-            self.metric_fps.set_value(f"{res.fps:.0f}" if res.fps > 0 else "--")
-            self.metric_ms.set_value(f"{res.infer_ms:.1f}")
-            self.metric_det.set_value(str(len(res.detections)))
-            self.video.set_tags(fps=res.fps, model=self._model_label,
-                                alarming=res.alarming)
-            # 报警状态变了才刷状态栏，避免每帧重绘
-            if bool(res.alarming) != self._alarming:
-                self._alarming = bool(res.alarming)
-                self._sync_state()
+        self._update_channel_status()
 
-        # 采集源跑完（单张图片 / 不循环的视频）：保留最后一帧
-        if self.pipeline.finished:
-            self._teardown(keep_view=True)
-            self.status_text.setText("当前状态：已结束（处理完毕）")
-            self.status_text.setStyleSheet(
-                f"font-size:14px;font-weight:600;color:{theme.TEXT_DIM};")
+    def _frame_to_pixmap(self, frame_bgr) -> QPixmap:
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        h, w, _ = rgb.shape
+        qimg = QImage(rgb.data, w, h, rgb.strides[0], QImage.Format.Format_RGB888)
+        return QPixmap.fromImage(qimg.copy())
 
     # ============================================================ 次要操作
     def _screenshot(self) -> None:
@@ -443,11 +534,20 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _open_events(self) -> None:
-        path = self.cfg.resolve(self.cfg.alarm.events_csv)
-        if not path.exists():
+        path = self._events_csv_path()
+        if path is None or not path.exists():
             QMessageBox.information(self, "事件表", "还没有报警事件。")
             return
         subprocess.Popen(["explorer", "/select,", str(path)])
+
+    def _events_csv_path(self) -> Path | None:
+        if self._multi:
+            s = self._streams.get(self._selected)
+            if s is not None and s.alarm is not None:
+                return s.alarm.events_csv
+            from core.stream import safe_dir
+            return self.cfg.resolve(f"captures/{safe_dir(self._selected or '')}/events.csv")
+        return self.cfg.resolve(self.cfg.alarm.events_csv)
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.cfg, self)
@@ -468,22 +568,24 @@ class MainWindow(QMainWindow):
         self.cfg.roi.points = [[float(x), float(y)] for x, y in points]
         self.cfg.roi.enabled = True
         save_config(self.cfg)
-        if self.pipeline is not None:                       # 让正在跑的画面立即生效
-            self.pipeline.roi = RoiRegion.from_config(self.cfg.roi)
+        for s in self._streams.values():
+            if s.pipeline is not None:
+                s.pipeline.roi = RoiRegion.from_config(self.cfg.roi)
         self._toast.popup("危险区域已设置", f"{len(points)} 个顶点 · 只统计区域内目标")
 
     def _clear_roi(self) -> None:
         self.cfg.roi.points = []
         self.cfg.roi.enabled = False
         save_config(self.cfg)
-        if self.pipeline is not None:
-            self.pipeline.roi = RoiRegion.from_config(self.cfg.roi)
+        for s in self._streams.values():
+            if s.pipeline is not None:
+                s.pipeline.roi = RoiRegion.from_config(self.cfg.roi)
         self._toast.popup("危险区域已清除", "现在统计全画面目标")
 
     # ============================================================ 导出 Excel
     def _export_excel(self) -> None:
-        csv_path = self.cfg.resolve(self.cfg.alarm.events_csv)
-        if not csv_path.exists():
+        csv_path = self._events_csv_path()
+        if csv_path is None or not csv_path.exists():
             QMessageBox.information(self, "导出 Excel", "还没有报警事件，先跑一会儿再导出。")
             return
         default = f"报警记录_{time.strftime('%Y%m%d_%H%M')}.xlsx"
@@ -498,21 +600,20 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "导出失败", f"{type(exc).__name__}: {exc}")
 
     # ============================================================ 报警
-    def _on_alarm(self, ev: AlarmEvent) -> None:
-        """报警事件：写进事件流 + 浮层提示（本方法在界面线程执行）。"""
-        self.event_stream.add_event(ev.time_str, ev.max_conf, ev.cls_name,
-                                    ev.image_path)
-        self._toast.popup(f"检测到 {ev.count} 处未佩戴安全帽",
+    def _on_alarm(self, payload) -> None:
+        name, ev = payload
+        prefix = f"[{name}] " if self._multi else ""
+        label = f"{name} · {ev.time_str}" if self._multi else ev.time_str
+        self.event_stream.add_event(label, ev.max_conf, ev.cls_name, ev.image_path)
+        self._toast.popup(f"{prefix}检测到 {ev.count} 处未佩戴安全帽",
                           f"{ev.time_str}　最高置信度 {ev.max_conf:.2f}")
         self._place_toast()
 
     def _open_image(self, path: str) -> None:
-        """双击事件条目 → 用系统看图打开抓拍。"""
         if path and Path(path).exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _place_toast(self) -> None:
-        """把浮层提示放到视频区右上角。"""
         if not hasattr(self, "_toast"):
             return
         margin = 18
