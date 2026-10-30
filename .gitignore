@@ -4,6 +4,7 @@ runs/
 models/
 dist/
 build/
+packaging/*.spec
 _archive/
 captures/
 *.pt

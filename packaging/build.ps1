@@ -30,6 +30,7 @@ if (-not (Test-Path "models\best.onnx")) {
     --name hat_detector `
     --distpath dist --workpath build --specpath packaging `
     --add-data "$proj\models\best.onnx;models" `
+    --add-data "$proj\assets;assets" `
     --exclude-module torch --exclude-module torchvision --exclude-module torchaudio `
     --exclude-module ultralytics --exclude-module ultralytics_thop `
     --exclude-module gradio --exclude-module gradio_client `
