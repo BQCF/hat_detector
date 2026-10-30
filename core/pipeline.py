@@ -23,6 +23,8 @@ class PipelineResult:
     frame: np.ndarray
     detections: list[Detection] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=dict)
+    track_stats: dict = field(default_factory=dict)
+    roi_active: bool = False
     infer_ms: float = 0.0
     fps: float = 0.0
     timestamp: float = 0.0
@@ -38,11 +40,14 @@ class InferPipeline:
     """
 
     def __init__(self, detector: Detector, source: FrameSource,
-                 alarm: AlarmManager | None = None, dedup: bool = True):
+                 alarm: AlarmManager | None = None, dedup: bool = True,
+                 tracker=None, roi=None):
         self.detector = detector
         self.source = source
         self.alarm = alarm
         self.dedup = dedup
+        self.tracker = tracker
+        self.roi = roi
 
         self._frame_q: queue.Queue = queue.Queue(maxsize=2)
         self._result_q: queue.Queue = queue.Queue(maxsize=2)
@@ -160,14 +165,29 @@ class InferPipeline:
 
         if self.dedup:
             dets = cross_class_dedup(dets, iou_thr=0.5)
-        counts = count_classes(dets, self.detector.names)
+        if self.tracker is not None:
+            dets = self.tracker.update(dets)
 
-        # 画框（复制一份，避免污染采集缓冲）
-        annotated = self.detector.draw(frame.copy(), dets)
+        # 危险区域：拆成区域内 / 区域外，只对区域内统计与报警
+        h, w = frame.shape[:2]
+        if self.roi is not None and self.roi.active:
+            inside, outside = self.roi.partition(dets, w, h)
+            roi_active = True
+        else:
+            inside, outside = dets, []
+            roi_active = False
+        counts = count_classes(inside, self.detector.names)
+
+        # 画框（复制一份，避免污染采集缓冲）：区域内正常色、区域外灰色，再叠区域多边形
+        annotated = self.detector.draw(frame.copy(), inside, secondary=outside)
+        if self.roi is not None:
+            self.roi.draw(annotated)
 
         alarming = False
         if self.alarm is not None:
-            alarming = self.alarm.update(counts, annotated.copy(), dets)
+            alarming = self.alarm.update(counts, annotated.copy(), inside)
+
+        track_stats = self.tracker.stats() if self.tracker is not None else {}
 
         now = time.time()
         self._stamps.append(now)
@@ -177,7 +197,8 @@ class InferPipeline:
             if span > 0:
                 fps = (len(self._stamps) - 1) / span
 
-        result = PipelineResult(frame=annotated, detections=dets, counts=counts,
+        result = PipelineResult(frame=annotated, detections=inside, counts=counts,
+                                track_stats=track_stats, roi_active=roi_active,
                                 infer_ms=infer_ms, fps=fps, timestamp=now,
                                 alarming=alarming)
         self._put_latest(self._result_q, result)

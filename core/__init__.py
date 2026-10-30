@@ -1,11 +1,14 @@
 # core 包：检测、采集、报警的纯逻辑层，**不依赖 Qt**。
 # 这样网页版、桌面版、无界面 CLI 三种入口共用同一套实现，不会出现三份逻辑。
-from .config import AlarmConfig, AppConfig, load_config, save_config
+from .config import AlarmConfig, RoiConfig, TrackConfig, AppConfig, load_config, save_config
 from .detector import Detection, Detector
 from .alarm import AlarmManager
 from .pipeline import InferPipeline, PipelineResult
 from .postprocess import count_classes, cross_class_dedup
 from .sources import create_source, FrameSource
+from .tracker import IouTracker
+from .roi import RoiRegion
+from .report import export_events_excel
 
 __all__ = [
     "AlarmConfig", "AppConfig", "load_config", "save_config",
@@ -14,4 +17,5 @@ __all__ = [
     "InferPipeline", "PipelineResult",
     "count_classes", "cross_class_dedup",
     "create_source", "FrameSource",
+    "RoiConfig", "TrackConfig", "IouTracker", "RoiRegion", "export_events_excel",
 ]

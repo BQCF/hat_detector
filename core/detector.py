@@ -31,6 +31,7 @@ class Detection:
     cls_id: int
     cls_name: str
     conf: float
+    track_id: int = -1
 
     @property
     def box(self) -> tuple[float, float, float, float]:
@@ -253,18 +254,30 @@ class Detector:
 
     # ---------------- 画框 ----------------
     def draw(self, frame_bgr: np.ndarray, dets: list[Detection],
-             thickness: int = 2) -> np.ndarray:
-        """在帧上画检测框（原地修改并返回同一张图）。"""
+             thickness: int = 2, secondary: list[Detection] | None = None) -> np.ndarray:
+        """在帧上画检测框；secondary 里的框画成灰色（危险区域外）。
+
+        标签会带上跟踪 id（如 head#12 0.87），便于看出"同一个人"被去重。
+        """
         for d in dets:
-            color = CLASS_COLORS.get(d.cls_name, (255, 255, 255))
-            p1 = (int(d.x1), int(d.y1))
-            p2 = (int(d.x2), int(d.y2))
-            cv2.rectangle(frame_bgr, p1, p2, color, thickness)
-            label = f"{d.cls_name} {d.conf:.2f}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-            ty = max(p1[1] - 6, th + 6)
-            cv2.rectangle(frame_bgr, (p1[0], ty - th - 8), (p1[0] + tw + 6, ty + 2),
-                          color, -1)
-            cv2.putText(frame_bgr, label, (p1[0] + 3, ty - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+            self._draw_one(frame_bgr, d, CLASS_COLORS.get(d.cls_name, (255, 255, 255)),
+                           thickness, dim=False)
+        for d in (secondary or []):
+            self._draw_one(frame_bgr, d, (120, 120, 120), thickness, dim=True)
         return frame_bgr
+
+    @staticmethod
+    def _draw_one(frame_bgr, d: Detection, color, thickness: int, dim: bool) -> None:
+        p1 = (int(d.x1), int(d.y1))
+        p2 = (int(d.x2), int(d.y2))
+        cv2.rectangle(frame_bgr, p1, p2, color, thickness)
+        label = d.cls_name
+        if d.track_id >= 0:
+            label += f"#{d.track_id}"
+        label += f" {d.conf:.2f}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+        ty = max(p1[1] - 6, th + 6)
+        cv2.rectangle(frame_bgr, (p1[0], ty - th - 8), (p1[0] + tw + 6, ty + 2),
+                      color, -1)
+        cv2.putText(frame_bgr, label, (p1[0] + 3, ty - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)

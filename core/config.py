@@ -25,6 +25,23 @@ class AlarmConfig:
     events_csv: str = "captures/events.csv"
     alarm_class: str = "head"         # 触发报警的类别：head = 未戴安全帽
     max_snapshots: int = 2000         # 抓拍最多保留多少张，超了自动删最旧的（0=不限制）
+    dedup_by_track: bool = True       # 跟踪去重：同一个人只报一次，而不是每秒一次
+
+
+@dataclass
+class RoiConfig:
+    """危险区域（归一化坐标多边形，0~1，换分辨率不用重画）。"""
+    enabled: bool = False
+    points: list = field(default_factory=list)   # [[nx, ny], ...] 0~1
+    only_inside: bool = True                     # True=只统计/报警区域内目标
+
+
+@dataclass
+class TrackConfig:
+    """多目标跟踪。"""
+    enabled: bool = True
+    iou_thr: float = 0.3              # 匹配 IoU 阈值
+    max_age: int = 30                 # 连续丢失多少帧后回收轨迹
 
 
 @dataclass
@@ -44,11 +61,17 @@ class AppConfig:
     video_loop: bool = True           # 视频播完是否循环
     ui_interval_ms: int = 33          # 界面刷新间隔（约 30 FPS）
     alarm: AlarmConfig = field(default_factory=AlarmConfig)
+    roi: RoiConfig = field(default_factory=RoiConfig)
+    track: TrackConfig = field(default_factory=TrackConfig)
 
     def resolve(self, p: str | Path) -> Path:
         """把配置里的相对路径按项目根目录解析成绝对路径。"""
         q = Path(p)
         return q if q.is_absolute() else (BASE_DIR / q)
+
+
+# AppConfig 里嵌套的子配置：加载时逐个实例化
+_NESTED = {"alarm": AlarmConfig, "roi": RoiConfig, "track": TrackConfig}
 
 
 def load_config(path: Path | str | None = None) -> AppConfig:
@@ -57,11 +80,17 @@ def load_config(path: Path | str | None = None) -> AppConfig:
     if not p.exists():
         return AppConfig()
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    alarm_data = data.pop("alarm", {}) or {}
-    known = {f for f in AppConfig.__dataclass_fields__ if f != "alarm"}
+
+    nested = {}
+    for key, cls in _NESTED.items():
+        payload = data.pop(key, None) or {}
+        allowed = set(cls.__dataclass_fields__)
+        nested[key] = cls(**{k: v for k, v in payload.items() if k in allowed})
+
+    known = {f for f in AppConfig.__dataclass_fields__ if f not in _NESTED}
     cfg = AppConfig(**{k: v for k, v in data.items() if k in known})
-    alarm_known = set(AlarmConfig.__dataclass_fields__)
-    cfg.alarm = AlarmConfig(**{k: v for k, v in alarm_data.items() if k in alarm_known})
+    for k, v in nested.items():
+        setattr(cfg, k, v)
     return cfg
 
 

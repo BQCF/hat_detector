@@ -47,6 +47,19 @@ class VideoView(QLabel):
             Qt.TransformationMode.SmoothTransformation)
         self.setPixmap(scaled)
 
+    def image_rect(self):
+        """当前画面在控件里实际占据的矩形（等比缩放后居中）。没有画面返回 None。"""
+        if self._pixmap is None:
+            return None
+        iw, ih = self._pixmap.width(), self._pixmap.height()
+        lw, lh = self.width(), self.height()
+        if iw <= 0 or ih <= 0 or lw <= 0 or lh <= 0:
+            return None
+        scale = min(lw / iw, lh / ih)
+        dw, dh = iw * scale, ih * scale
+        from PySide6.QtCore import QRectF
+        return QRectF((lw - dw) / 2, (lh - dh) / 2, dw, dh)
+
     def resizeEvent(self, event) -> None:                 # noqa: N802
         super().resizeEvent(event)
         self._apply()

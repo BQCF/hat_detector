@@ -21,12 +21,16 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
                                QPushButton, QSizePolicy, QVBoxLayout, QWidget)
 
 from core.alarm import AlarmEvent, AlarmManager
-from core.config import AppConfig
+from core.config import AppConfig, save_config
 from core.detector import Detector
 from core.pipeline import InferPipeline, PipelineResult
+from core.report import export_events_excel
+from core.roi import RoiRegion
 from core.sources import create_source
+from core.tracker import IouTracker
 
 from . import theme
+from .roi_editor import RoiEditor
 from .settings_dialog import SettingsDialog
 from .widgets import (Card, Divider, EventStream, MetricRow, SourceSegments,
                       StatusDot, Toast, VideoArea)
@@ -68,6 +72,9 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(theme.stylesheet())
 
         self._build_ui()
+        self._roi_editor = RoiEditor(self.video)
+        self._roi_editor.finished.connect(self._on_roi_finished)
+        self._roi_editor.cancelled.connect(lambda: None)
         self._bind_shortcuts()
         self._sync_state()
         self._update_source_hint()
@@ -160,9 +167,13 @@ class MainWindow(QMainWindow):
         ghost_row.setContentsMargins(0, 0, 0, 0)
         ghost_row.setSpacing(4)
         self.btn_shot = QPushButton("截图")
-        self.btn_events = QPushButton("打开事件表")
+        self.btn_events = QPushButton("事件表")
+        self.btn_export = QPushButton("导出 Excel")
+        self.btn_roi = QPushButton("画区域")
+        self.btn_roi_clear = QPushButton("清区域")
         self.btn_settings = QPushButton("设置")
-        for b in (self.btn_shot, self.btn_events, self.btn_settings):
+        for b in (self.btn_shot, self.btn_events, self.btn_export,
+                  self.btn_roi, self.btn_roi_clear, self.btn_settings):
             b.setObjectName("GhostBtn")
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             ghost_row.addWidget(b)
@@ -174,6 +185,9 @@ class MainWindow(QMainWindow):
         self.sources.changed.connect(self._on_source_changed)
         self.btn_shot.clicked.connect(self._screenshot)
         self.btn_events.clicked.connect(self._open_events)
+        self.btn_export.clicked.connect(self._export_excel)
+        self.btn_roi.clicked.connect(self._enter_roi)
+        self.btn_roi_clear.clicked.connect(self._clear_roi)
         self.btn_settings.clicked.connect(self._open_settings)
         return card
 
@@ -339,7 +353,12 @@ class MainWindow(QMainWindow):
             source.open()
             alarm = AlarmManager(self.cfg.alarm,
                                  on_alarm=self._alarm_bridge.triggered.emit)
-            self.pipeline = InferPipeline(self.detector, source, alarm=alarm, dedup=True)
+            tracker = None
+            if self.cfg.track.enabled:
+                tracker = IouTracker(self.cfg.track.iou_thr, self.cfg.track.max_age)
+            roi = RoiRegion.from_config(self.cfg.roi)
+            self.pipeline = InferPipeline(self.detector, source, alarm=alarm, dedup=True,
+                                          tracker=tracker, roi=roi)
             self.pipeline.start()
         except Exception as exc:                            # noqa: BLE001
             self.detector = None
@@ -436,6 +455,47 @@ class MainWindow(QMainWindow):
             self._update_source_hint()
             if self.card_control.hint_label:
                 self.card_control.hint_label.setText("已保存 · 下次开始生效")
+
+    # ============================================================ 危险区域
+    def _enter_roi(self) -> None:
+        rect = self.video.image_rect()
+        if rect is None:
+            QMessageBox.information(self, "画区域", "请先开始检测加载画面，再绘制危险区域。")
+            return
+        self._roi_editor.begin(rect, existing=self.cfg.roi.points)
+
+    def _on_roi_finished(self, points) -> None:
+        self.cfg.roi.points = [[float(x), float(y)] for x, y in points]
+        self.cfg.roi.enabled = True
+        save_config(self.cfg)
+        if self.pipeline is not None:                       # 让正在跑的画面立即生效
+            self.pipeline.roi = RoiRegion.from_config(self.cfg.roi)
+        self._toast.popup("危险区域已设置", f"{len(points)} 个顶点 · 只统计区域内目标")
+
+    def _clear_roi(self) -> None:
+        self.cfg.roi.points = []
+        self.cfg.roi.enabled = False
+        save_config(self.cfg)
+        if self.pipeline is not None:
+            self.pipeline.roi = RoiRegion.from_config(self.cfg.roi)
+        self._toast.popup("危险区域已清除", "现在统计全画面目标")
+
+    # ============================================================ 导出 Excel
+    def _export_excel(self) -> None:
+        csv_path = self.cfg.resolve(self.cfg.alarm.events_csv)
+        if not csv_path.exists():
+            QMessageBox.information(self, "导出 Excel", "还没有报警事件，先跑一会儿再导出。")
+            return
+        default = f"报警记录_{time.strftime('%Y%m%d_%H%M')}.xlsx"
+        path, _ = QFileDialog.getSaveFileName(self, "导出 Excel", default,
+                                              "Excel 工作簿 (*.xlsx)")
+        if not path:
+            return
+        try:
+            out = export_events_excel(csv_path, path)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(out)))
+        except Exception as exc:                            # noqa: BLE001
+            QMessageBox.warning(self, "导出失败", f"{type(exc).__name__}: {exc}")
 
     # ============================================================ 报警
     def _on_alarm(self, ev: AlarmEvent) -> None:

@@ -281,6 +281,10 @@ class VideoArea(QFrame):
         self._tags.adjustSize()          # 文案变了要重新量尺寸，否则会被截断
         self._tags.raise_()
 
+    def image_rect(self):
+        """画面在控件里的实际显示矩形（画危险区域时做坐标映射）。"""
+        return self.view.image_rect()
+
     def set_frame(self, frame_bgr) -> None:
         """第二步接入：把 BGR 帧喂进来就切到视频层。"""
         self.view.set_frame(frame_bgr)

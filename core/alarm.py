@@ -50,6 +50,8 @@ class AlarmManager:
         self.is_alarming = False
         self._last_notify = 0.0
         self._seq = 0
+        self._seen_ids: set[int] = set()      # 已经报过警的 track id（一人一次）
+        self._track_hits: dict[int, int] = {}  # 每个 track 连续命中多少帧
 
     @property
     def snapshot_dir(self) -> Path:
@@ -65,6 +67,8 @@ class AlarmManager:
     def reset(self) -> None:
         self.counter = 0
         self.is_alarming = False
+        self._seen_ids.clear()
+        self._track_hits.clear()
 
     def update(self, counts: dict[str, int], frame_bgr=None,
                detections=None) -> bool:
@@ -72,12 +76,38 @@ class AlarmManager:
         if not self.cfg.enabled:
             return False
 
-        hit = counts.get(self.cfg.alarm_class, 0) > 0
+        cls = self.cfg.alarm_class
+        dedup = bool(getattr(self.cfg, "dedup_by_track", True))
+        has_ids = bool(detections) and any(getattr(d, "track_id", -1) >= 0 for d in detections)
+        now = time.time()
+
+        # ---- 跟踪去重模式：同一个人（track）只报一次 ----
+        if dedup and has_ids:
+            current: set[int] = set()
+            for d in detections:
+                if d.cls_name == cls and d.track_id >= 0:
+                    current.add(d.track_id)
+                    self._track_hits[d.track_id] = self._track_hits.get(d.track_id, 0) + 1
+            for tid in list(self._track_hits):          # 清掉已消失的轨迹计数
+                if tid not in current:
+                    del self._track_hits[tid]
+            confirmed = [tid for tid, n in self._track_hits.items()
+                         if n >= self.cfg.confirm_frames]
+            fresh = [tid for tid in confirmed if tid not in self._seen_ids]
+            self.is_alarming = bool(confirmed)
+            if fresh:
+                self._seen_ids.update(fresh)
+                if len(self._seen_ids) > 20000:         # 防内存无限涨
+                    self._seen_ids.clear()
+                self._notify(counts, frame_bgr, detections)
+                self._last_notify = now
+            return self.is_alarming
+
+        # ---- 兜底：整帧计数 + 冷却（没有跟踪信息时） ----
+        hit = counts.get(cls, 0) > 0
         self.counter = self.counter + 1 if hit else max(0, self.counter - 1)
         was = self.is_alarming
         self.is_alarming = self.counter >= self.cfg.confirm_frames
-
-        now = time.time()
         rising = self.is_alarming and not was
         periodic = self.is_alarming and (now - self._last_notify) >= self.cfg.cooldown_sec
         if rising or periodic:
