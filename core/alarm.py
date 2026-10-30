@@ -11,6 +11,7 @@ from pathlib import Path
 import cv2
 
 from .config import AlarmConfig
+from .paths import user_dir
 
 CSV_HEADER = ["时间", "类别", "最高置信度", "命中数量", "抓拍图片"]
 
@@ -43,7 +44,7 @@ class AlarmManager:
     def __init__(self, cfg: AlarmConfig, base_dir: Path | None = None,
                  on_alarm=None):
         self.cfg = cfg
-        self.base_dir = base_dir or Path(__file__).resolve().parent.parent
+        self.base_dir = base_dir or user_dir()
         self.on_alarm = on_alarm
         self.counter = 0
         self.is_alarming = False

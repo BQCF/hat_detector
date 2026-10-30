@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
             self.detector = Detector(
                 model_path=self.cfg.model_path, device=self.cfg.device,
                 conf=self.cfg.conf, iou=self.cfg.iou, imgsz=self.cfg.imgsz,
-                max_det=self.cfg.max_det)
+                max_det=self.cfg.max_det, backend=self.cfg.backend)
             self.alarm = AlarmManager(self.cfg.alarm,
                                       on_alarm=self._bridge.alarm_happened.emit)
             source = create_source(self.cfg.source_type, self.cfg.source_value,

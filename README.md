@@ -180,6 +180,43 @@ python demo.py --source photo.jpg --save    # 单张图片检测并保存
 python demo.py --source 0 --conf 0.5        # 轻量版实时检测
 ```
 
+## 部署与打包（免 Python 环境）
+
+模型可以导出成 ONNX，再用 PyInstaller 打成单目录 exe，别人**双击就能用**，不用装 Python / CUDA / torch。
+
+```bash
+# 1) 导出 ONNX（best.pt -> best.onnx，约 12MB）
+python scripts/export.py
+
+# 2) 对比两个后端：确认结果一致、速度可接受（要分开进程跑，见下方提示）
+python scripts/benchmark_backends.py --only torch
+python scripts/benchmark_backends.py --only onnx
+python scripts/benchmark_backends.py              # 两后端一致性对比
+
+# 3) 打包（Windows）
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+# 产物：dist\hat_detector\hat_detector.exe —— 整个文件夹拷给别人即可
+```
+
+**两个推理后端**（设置里的 `backend`：`auto` / `torch` / `onnx`）：
+
+| 后端 | 依赖 | imgsz 640 | imgsz 320 | 用途 |
+| --- | --- | --- | --- | --- |
+| torch | ultralytics + PyTorch（约 2.5GB） | 19.0ms（GPU，52 FPS） | — | 开发机有显卡时最快 |
+| **onnx** | onnxruntime（约 38MB） | **23.9ms（CPU，42 FPS）** | **7.7ms（CPU，129 FPS）** | 打包后的 exe 用它 |
+
+两后端检测一致率 **98.5% ~ 100%**（IoU≥0.5 且同类别算匹配），可以放心切换。
+
+> ⚠️ 测速注意：torch 与 onnxruntime 各有自己的线程池，**放进同一个进程会互相抢 CPU**——
+> 实测同进程跑会把 onnx 的 24ms 拉到 225ms。请用 `--only` 分别开进程测。
+
+**打包产物实测**：`dist/hat_detector/` 共 **265.4 MB**，冷启动到出窗口 **0.11 秒**，运行时占用约 228MB 内存。
+
+> 原计划压到 120MB，实际做不到：OpenCV 的 `cv2.pyd` 是单体文件 **82MB**，视频解码库再占 **29MB**，
+> 光这两项就 111MB。已裁掉 PyInstaller 自动带进来的无用 Qt 组件（软件 OpenGL 回退、Qt6Quick/Qml/Pdf 等，共 39.2MB）。
+> 想再瘦只能牺牲能力：去掉 ffmpeg 库（-29MB，但 mp4/RTSP 就打不开了）。
+> 相比之下，**原来要 2.5GB 的 Python + torch 环境，现在 265MB 单目录双击即用**。
+
 ## 目录结构
 
 ```
@@ -187,8 +224,9 @@ hat_detector/
 ├─ desktop.py             # ★ 桌面程序入口（PySide6）
 ├─ cli.py                 # ★ 无界面模式（给无显示器机器 / 脚本调用）
 ├─ core/                  # ★ 纯逻辑层，不依赖 Qt
+│  ├─ paths.py            #   打包后路径解析（只读资源 vs 可写数据）
 │  ├─ config.py           #   配置读写（configs/default.yaml）
-│  ├─ detector.py         #   模型加载与推理、画框
+│  ├─ detector.py         #   模型加载与推理（torch / onnx 双后端）、画框
 │  ├─ sources.py          #   摄像头 / 视频 / 图片 / RTSP 统一采集接口
 │  ├─ pipeline.py         #   采集 + 推理双线程管道（丢旧帧保证实时）
 │  ├─ postprocess.py      #   跨类别去重、分类计数
@@ -205,14 +243,20 @@ hat_detector/
 ├─ evaluate.py            # val / test 指标评估，可落盘 JSON
 ├─ data.yaml              # 3 类数据集配置（head / helmet / person）
 ├─ data2cls.yaml          # 二分类数据集配置（head / helmet，当前使用）
+├─ models/                # 打包用的 ONNX 模型（不入库）
 ├─ scripts/
 │  ├─ check_dataset.py    # 数据集体检
-│  └─ make_2class.py      # 从 3 类派生二分类数据集
+│  ├─ make_2class.py      # 从 3 类派生二分类数据集
+│  ├─ export.py           # best.pt -> best.onnx
+│  └─ benchmark_backends.py  # torch / onnx 速度与一致性对比
+├─ packaging/
+│  └─ build.ps1           # PyInstaller 打包脚本（含裁剪无用 Qt 组件）
 ├─ docs/
 │  ├─ report_2cls.md      # 二分类重训对比报告
 │  └─ images/             # README 与报告用图
-├─ requirements.txt       # 运行依赖（含 PySide6）
-├─ requirements-train.txt # 训练 / GPU 依赖
+├─ requirements.txt        # 运行依赖（含 PySide6、onnxruntime）
+├─ requirements-train.txt  # 训练 / GPU 依赖
+├─ requirements-deploy.txt # 导出 ONNX + 打包依赖
 ├─ data/                  # 数据集（不入库）
 ├─ captures/              # 报警抓拍与事件表（不入库）
 └─ runs/                  # 训练与评估产物、模型权重（不入库）
@@ -235,15 +279,15 @@ hat_detector/
 
 ## 已知限制
 
-- 网页版实时链路约 5 FPS（桌面版本地检测约 100 FPS）；
-- 多路摄像头、ROI 危险区域、按跟踪去重还没做；
-- 还没打包成 exe，运行需要 Python 环境。
+- 网页版实时链路约 5 FPS（桌面版本地检测约 40~100 FPS）；
+- 打包产物 265MB，主要被 OpenCV 的单体 `cv2.pyd`（82MB）和视频解码库（29MB）占住；
+- 多路摄像头、ROI 危险区域、按跟踪去重还没做。
 
 ## 优化路线
 
 1. ✅ **模型**（已完成）：head/helmet 二分类重训、测试集接入评估、训练脚本带时间戳实验目录 —— 见 [docs/report_2cls.md](docs/report_2cls.md)；
 2. ✅ **桌面程序**（已完成）：PySide6 界面 + `core` 纯逻辑层（采集 / 推理双线程），支持摄像头、视频、图片、RTSP，报警闭环（连续帧去抖 + 声音 + 抓拍 + CSV 事件），设置面板写回 `configs/default.yaml`；
-3. **部署**：导出 ONNX 用 onnxruntime 推理，PyInstaller 打包成双击可用的 exe（目标 ≤120MB，免 Python 环境）；
+3. ✅ **部署**（已完成）：best.pt → ONNX，torch / onnx 双后端（一致率 98.5%+），PyInstaller 单目录 exe **265MB、冷启动 0.11 秒、免 Python 环境**；
 4. **增强**：ROI 区域、ByteTrack 去重、多路摄像头、事件导出 Excel。
 
 ## 数据与致谢

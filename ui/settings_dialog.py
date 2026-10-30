@@ -41,6 +41,15 @@ class SettingsDialog(QDialog):
         self.device_combo.setCurrentText(cfg.device)
         f1.addRow("运行设备", self.device_combo)
 
+        self.backend_combo = QComboBox()
+        self.backend_combo.addItems(["auto", "torch", "onnx"])
+        self.backend_combo.setCurrentText(cfg.backend)
+        self.backend_combo.setToolTip(
+            "auto：开发机用 torch（GPU 快），打包后的 exe 用 onnx（体积小免 CUDA）\n"
+            "torch：ultralytics + PyTorch\n"
+            "onnx：onnxruntime，CPU 约 20-40ms/帧")
+        f1.addRow("推理后端", self.backend_combo)
+
         self.conf_spin = QDoubleSpinBox()
         self.conf_spin.setRange(0.05, 0.95)
         self.conf_spin.setSingleStep(0.05)
@@ -119,6 +128,7 @@ class SettingsDialog(QDialog):
         """把表单内容写回配置并落盘。"""
         c = self.cfg
         c.model_path = self.model_edit.text().strip()
+        c.backend = self.backend_combo.currentText()
         c.device = self.device_combo.currentText()
         c.conf = self.conf_spin.value()
         c.imgsz = self.imgsz_spin.value()

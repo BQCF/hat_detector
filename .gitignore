@@ -2,6 +2,8 @@
 data/
 runs/
 models/
+dist/
+build/
 _archive/
 captures/
 *.pt

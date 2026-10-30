@@ -1,0 +1,6 @@
+# 导出 ONNX + 打包 exe 需要的依赖（平时跑程序不需要装）
+# 安装：pip install -r requirements-deploy.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+onnx==1.23.2
+onnxruntime==1.31.1
+onnxsim==0.8.1
+pyinstaller==6.22.3

@@ -7,7 +7,9 @@ from pathlib import Path
 
 import yaml
 
-BASE_DIR = Path(__file__).resolve().parent.parent     # 项目根目录
+from .paths import user_dir
+
+BASE_DIR = user_dir()                                    # 可写根目录（打包后在 exe 旁边）
 DEFAULT_CONFIG_PATH = BASE_DIR / "configs" / "default.yaml"
 
 
@@ -27,7 +29,8 @@ class AlarmConfig:
 @dataclass
 class AppConfig:
     """程序总配置。"""
-    model_path: str = ""              # 留空 = 自动找 runs/detect 下最新的 best.pt
+    model_path: str = ""              # 留空 = 自动找 runs/detect 下最新的 best.pt / best.onnx
+    backend: str = "auto"             # auto / torch / onnx
     device: str = "auto"              # auto / cpu / 0 / 1 ...
     conf: float = 0.25                # 置信度阈值
     iou: float = 0.45                 # NMS IoU 阈值

@@ -31,7 +31,9 @@ def main() -> int:
                    help="采集源类型（默认取配置里的 source_type）")
     p.add_argument("--source", default=None,
                    help="摄像头序号 / 文件路径 / rtsp 地址（默认取配置里的 source_value）")
-    p.add_argument("--model", default="", help="模型权重路径（默认自动找最新的 best.pt）")
+    p.add_argument("--model", default="", help="模型权重路径（默认自动找最新的 best.pt / best.onnx）")
+    p.add_argument("--backend", default="", choices=["", "auto", "torch", "onnx"],
+                   help="推理后端：torch=ultralytics+GPU，onnx=onnxruntime（默认取配置）")
     p.add_argument("--conf", type=float, default=None, help="置信度阈值")
     p.add_argument("--imgsz", type=int, default=None, help="推理分辨率")
     p.add_argument("--frames", type=int, default=0, help="处理多少帧后退出，0=直到采集源结束")
@@ -53,10 +55,10 @@ def main() -> int:
         cfg.alarm.sound = False
 
     print("=== 安全帽检测 · 无界面模式 ===")
-    detector = Detector(model_path=args.model, device=cfg.device,
+    detector = Detector(model_path=args.model, device=cfg.device, backend=args.backend or cfg.backend,
                         conf=cfg.conf, iou=cfg.iou, imgsz=cfg.imgsz, max_det=cfg.max_det)
     print(f"模型  : {detector.model_path}")
-    print(f"设备  : {detector.device}    类别: {list(detector.names.values())}")
+    print(f"后端  : {detector.backend_name}   设备: {detector.device}   类别: {list(detector.names.values())}")
     print(f"阈值  : conf={cfg.conf}  imgsz={cfg.imgsz}")
 
     source = create_source(cfg.source_type, cfg.source_value,
