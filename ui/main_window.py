@@ -14,12 +14,13 @@ import time
 from pathlib import Path
 
 import cv2
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QMainWindow, QMessageBox,
                                QPushButton, QSizePolicy, QVBoxLayout, QWidget)
 
+from core.alarm import AlarmEvent, AlarmManager
 from core.config import AppConfig
 from core.detector import Detector
 from core.pipeline import InferPipeline, PipelineResult
@@ -28,7 +29,13 @@ from core.sources import create_source
 from . import theme
 from .settings_dialog import SettingsDialog
 from .widgets import (Card, Divider, EventStream, MetricRow, SourceSegments,
-                      StatusDot, VideoArea)
+                      StatusDot, Toast, VideoArea)
+
+
+class _AlarmBridge(QObject):
+    """报警回调发生在推理线程里，用信号排队回界面线程再动控件。"""
+
+    triggered = Signal(object)
 
 
 class MainWindow(QMainWindow):
@@ -49,6 +56,11 @@ class MainWindow(QMainWindow):
         self.pipeline: InferPipeline | None = None
         self._last: PipelineResult | None = None
         self._model_label = "—"
+        self._alarming = False
+
+        # 报警回调在推理线程里触发 → 用信号排队回界面线程
+        self._alarm_bridge = _AlarmBridge()
+        self._alarm_bridge.triggered.connect(self._on_alarm)
 
         self.setWindowTitle("安全帽佩戴检测系统")
         self.resize(1380, 830)
@@ -88,6 +100,12 @@ class MainWindow(QMainWindow):
         col.addWidget(self.card_perf, 0)
         col.addWidget(self._build_event_card(), 1)
         outer.addWidget(right, 3)
+
+        # 浮层提示（挂在视频区上，右上角浮出）
+        self._toast = Toast(self.video)
+        self.event_stream.opened.connect(self._open_image)
+        self.video.installEventFilter(self)      # 视频区尺寸变化时重新定位浮层
+        self._place_toast()
 
     # ---------------------------------------------------- 卡片 A：控制与状态
     def _build_control_card(self) -> Card:
@@ -195,11 +213,20 @@ class MainWindow(QMainWindow):
     # ============================================================ 状态
     def _sync_state(self) -> None:
         running = self._running
-        self.status_dot.set_state("run" if running else "stop")
-        self.status_text.setText("当前状态：运行中" if running else "当前状态：已停止")
+        if running and self._alarming:
+            self.status_dot.set_state("alarm")
+            self.status_text.setText("当前状态：⚠ 检测到未佩戴安全帽")
+            color = theme.DANGER
+        elif running:
+            self.status_dot.set_state("run")
+            self.status_text.setText("当前状态：运行中")
+            color = theme.OK
+        else:
+            self.status_dot.set_state("stop")
+            self.status_text.setText("当前状态：已停止")
+            color = theme.TEXT_DIM
         self.status_text.setStyleSheet(
-            f"font-size:14px;font-weight:600;"
-            f"color:{theme.OK if running else theme.TEXT_DIM};")
+            f"font-size:14px;font-weight:600;color:{color};")
         self.btn_start.setEnabled(not running)
         self.btn_stop.setEnabled(running)
         self.video.set_running(running)
@@ -310,7 +337,9 @@ class MainWindow(QMainWindow):
                                    self.cfg.camera_width, self.cfg.camera_height,
                                    self.cfg.video_loop)
             source.open()
-            self.pipeline = InferPipeline(self.detector, source, alarm=None, dedup=True)
+            alarm = AlarmManager(self.cfg.alarm,
+                                 on_alarm=self._alarm_bridge.triggered.emit)
+            self.pipeline = InferPipeline(self.detector, source, alarm=alarm, dedup=True)
             self.pipeline.start()
         except Exception as exc:                            # noqa: BLE001
             self.detector = None
@@ -342,6 +371,8 @@ class MainWindow(QMainWindow):
             self.pipeline = None
         self.detector = None
         self._running = False
+        self._alarming = False
+        self._toast.hide()
         self._sync_state()
         if not keep_view:
             self._last = None
@@ -369,6 +400,10 @@ class MainWindow(QMainWindow):
             self.metric_det.set_value(str(len(res.detections)))
             self.video.set_tags(fps=res.fps, model=self._model_label,
                                 alarming=res.alarming)
+            # 报警状态变了才刷状态栏，避免每帧重绘
+            if bool(res.alarming) != self._alarming:
+                self._alarming = bool(res.alarming)
+                self._sync_state()
 
         # 采集源跑完（单张图片 / 不循环的视频）：保留最后一帧
         if self.pipeline.finished:
@@ -401,6 +436,33 @@ class MainWindow(QMainWindow):
             self._update_source_hint()
             if self.card_control.hint_label:
                 self.card_control.hint_label.setText("已保存 · 下次开始生效")
+
+    # ============================================================ 报警
+    def _on_alarm(self, ev: AlarmEvent) -> None:
+        """报警事件：写进事件流 + 浮层提示（本方法在界面线程执行）。"""
+        self.event_stream.add_event(ev.time_str, ev.max_conf, ev.cls_name,
+                                    ev.image_path)
+        self._toast.popup(f"检测到 {ev.count} 处未佩戴安全帽",
+                          f"{ev.time_str}　最高置信度 {ev.max_conf:.2f}")
+        self._place_toast()
+
+    def _open_image(self, path: str) -> None:
+        """双击事件条目 → 用系统看图打开抓拍。"""
+        if path and Path(path).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _place_toast(self) -> None:
+        """把浮层提示放到视频区右上角。"""
+        if not hasattr(self, "_toast"):
+            return
+        margin = 18
+        self._toast.move(max(margin, self.video.width() - self._toast.width() - margin),
+                         margin)
+
+    def eventFilter(self, obj, event):                        # noqa: N802
+        if obj is self.video and event.type() == QEvent.Type.Resize:
+            self._place_toast()
+        return super().eventFilter(obj, event)
 
     # ============================================================ 收尾
     def showEvent(self, event) -> None:                       # noqa: N802

@@ -24,6 +24,7 @@ class AlarmConfig:
     snapshot_dir: str = "captures"    # 抓拍与事件表存放目录（相对项目根目录）
     events_csv: str = "captures/events.csv"
     alarm_class: str = "head"         # 触发报警的类别：head = 未戴安全帽
+    max_snapshots: int = 2000         # 抓拍最多保留多少张，超了自动删最旧的（0=不限制）
 
 
 @dataclass

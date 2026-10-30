@@ -1,0 +1,23 @@
+model_path: ''
+backend: auto
+device: auto
+conf: 0.25
+iou: 0.45
+imgsz: 640
+max_det: 50
+source_type: camera
+source_value: '0'
+camera_width: 1280
+camera_height: 720
+video_loop: true
+ui_interval_ms: 33
+alarm:
+  enabled: true
+  confirm_frames: 3
+  cooldown_sec: 1.0
+  sound: true
+  snapshot: true
+  snapshot_dir: captures
+  events_csv: captures/events.csv
+  alarm_class: head
+  max_snapshots: 2000

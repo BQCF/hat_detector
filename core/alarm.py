@@ -100,6 +100,7 @@ class AlarmManager:
             fname = f"{time.strftime('%Y%m%d_%H%M%S')}_{self._seq:03d}.jpg"
             img_path = str(d / fname)
             cv2.imwrite(img_path, frame_bgr)
+            self._prune_snapshots(d)
 
         event = AlarmEvent(ts, cls, float(max_conf), int(count), img_path)
 
@@ -112,6 +113,22 @@ class AlarmManager:
                 self.on_alarm(event)
             except Exception:
                 pass    # 回调异常不应该影响检测主流程
+
+    def _prune_snapshots(self, folder: Path) -> None:
+        """只保留最近 max_snapshots 张抓拍。
+
+        报警每秒最多一次，长时间跑会无限堆图（一小时约 400MB），
+        这里按修改时间删掉最旧的，避免把磁盘吃满。
+        """
+        limit = int(getattr(self.cfg, "max_snapshots", 2000) or 0)
+        if limit <= 0:
+            return
+        try:
+            files = sorted(folder.glob("*.jpg"), key=lambda p: p.stat().st_mtime)
+            for old in files[: max(0, len(files) - limit)]:
+                old.unlink(missing_ok=True)
+        except OSError:
+            pass    # 清理失败不影响报警主流程
 
     def _append_csv(self, ev: AlarmEvent) -> None:
         path = self.events_csv

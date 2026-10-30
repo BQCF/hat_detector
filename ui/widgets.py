@@ -3,8 +3,10 @@
 # 这一步只管"长什么样"，不接业务逻辑（第二步再接）。
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from pathlib import Path
+
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel,
                                QPushButton, QScrollArea, QSizePolicy,
                                QStackedLayout, QVBoxLayout, QWidget)
@@ -298,25 +300,49 @@ class VideoArea(QFrame):
 
 
 # ---------------------------------------------------------------- 报警条目
+def _thumb_pixmap(path: str, w: int, h: int) -> QPixmap | None:
+    """把抓拍图裁成 w×h 的缩略图（等比放大后居中裁切，不变形）。"""
+    if not path or not Path(path).exists():
+        return None
+    pix = QPixmap(str(path))
+    if pix.isNull():
+        return None
+    scaled = pix.scaled(w, h,
+                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation)
+    x = max(0, (scaled.width() - w) // 2)
+    y = max(0, (scaled.height() - h) // 2)
+    return scaled.copy(x, y, w, h)
+
+
 class EventRow(QFrame):
-    """一条报警记录：缩略图 + 时间戳 + 置信度 + 状态徽章。未佩戴用橙红。"""
+    """一条报警记录：抓拍缩略图 + 时间戳 + 置信度 + 状态徽章。未佩戴用橙红。"""
+
+    opened = Signal(str)          # 双击时把抓拍路径发出去
+
+    THUMB_W, THUMB_H = 64, 44
 
     def __init__(self, time_text: str, conf: float, kind: str = "head",
-                 parent=None):
+                 image_path: str = "", parent=None):
         super().__init__(parent)
         self.setObjectName("EventRow")
+        self._image_path = image_path or ""
+
         row = QHBoxLayout(self)
         row.setContentsMargins(8, 8, 10, 8)
         row.setSpacing(10)
 
-        # 截图缩略图占位（第三步换成真实抓拍）
         thumb = QLabel()
-        thumb.setFixedSize(64, 44)
+        thumb.setFixedSize(self.THUMB_W, self.THUMB_H)
+        pix = _thumb_pixmap(self._image_path, self.THUMB_W, self.THUMB_H)
+        if pix is not None:
+            thumb.setPixmap(pix)
+        else:
+            thumb.setText("无图")
+            thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         thumb.setStyleSheet(
             f"background:{theme.BG};border:1px solid {theme.BORDER};"
             f"border-radius:6px;color:{theme.TEXT_FAINT};font-size:10px;")
-        thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        thumb.setText("截图")
         row.addWidget(thumb)
 
         col = QVBoxLayout()
@@ -335,9 +361,21 @@ class EventRow(QFrame):
         badge.setObjectName("BadgeDanger" if is_bad else "BadgeOk")
         row.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        if pix is not None:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setToolTip("双击查看抓拍")
+
+    def mouseDoubleClickEvent(self, event) -> None:           # noqa: N802
+        if self._image_path:
+            self.opened.emit(self._image_path)
+        super().mouseDoubleClickEvent(event)
+
 
 class EventStream(QScrollArea):
     """报警事件流：竖向滚动列表，新事件插在最上面。"""
+
+    opened = Signal(str)          # 双击某条 → 带出抓拍路径
+    MAX_ROWS = 100                # 太多会拖慢滚动，超过就丢最旧的
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -358,12 +396,23 @@ class EventStream(QScrollArea):
         self._list.addStretch(1)
 
         self.setWidget(self._host)
+        self._count = 0
 
-    def add_event(self, time_text: str, conf: float, kind: str = "head") -> EventRow:
+    def add_event(self, time_text: str, conf: float, kind: str = "head",
+                  image_path: str = "") -> EventRow:
         self._empty.hide()
-        row = EventRow(time_text, conf, kind)
-        # 插在最后那个 stretch 之前 → 新的在上
+        row = EventRow(time_text, conf, kind, image_path)
+        row.opened.connect(self.opened)
+        # 插在最后那个 stretch 之前 → 新的排最上面
         self._list.insertWidget(1, row)
+        self._count += 1
+
+        # 超出上限就删掉最旧的一条（列表末尾倒数第二个）
+        while self._count > self.MAX_ROWS and self._list.count() > 2:
+            item = self._list.takeAt(self._list.count() - 2)
+            if item.widget():
+                item.widget().deleteLater()
+            self._count -= 1
         return row
 
     def clear(self) -> None:
@@ -371,4 +420,61 @@ class EventStream(QScrollArea):
             item = self._list.takeAt(1)
             if item.widget():
                 item.widget().deleteLater()
+        self._count = 0
         self._empty.show()
+
+
+# ---------------------------------------------------------------- 浮层提示
+class Toast(QFrame):
+    """右上角浮出的非阻塞提示，几秒后自动消失。
+
+    用浮层而不是 QMessageBox：报警会反复触发，模态框会把视频卡住。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Toast")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedWidth(330)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(12, 10, 8, 10)
+        lay.setSpacing(10)
+
+        self._dot = StatusDot()
+        self._dot.set_state("alarm")
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(2)
+        self._title = QLabel("")
+        self._title.setObjectName("ToastTitle")
+        self._sub = QLabel("")
+        self._sub.setObjectName("ToastSub")
+        text_col.addWidget(self._title)
+        text_col.addWidget(self._sub)
+
+        self._close = QPushButton("×")
+        self._close.setObjectName("ToastClose")
+        self._close.setFixedSize(20, 20)
+        self._close.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._close.clicked.connect(self.hide)
+
+        lay.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignTop)
+        lay.addLayout(text_col, 1)
+        lay.addWidget(self._close, 0, Qt.AlignmentFlag.AlignTop)
+
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+
+        self.hide()
+
+    def popup(self, title: str, sub: str = "", msec: int = 4500) -> None:
+        self._title.setText(title)
+        self._sub.setText(sub)
+        self._sub.setVisible(bool(sub))
+        self.adjustSize()
+        self.show()
+        self.raise_()
+        self._timer.start(msec)

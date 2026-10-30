@@ -199,6 +199,24 @@ QLabel#BadgeOk {
     padding: 2px 8px;
 }
 QLabel#EmptyHint { font-size: 12px; color: @TEXT_FAINT@; }
+
+/* ---------- 浮层提示（非阻塞弹窗） ---------- */
+QFrame#Toast {
+    background: rgba(38, 20, 17, 240);
+    border: 1px solid @DANGER@;
+    border-radius: 10px;
+}
+QLabel#ToastTitle { font-size: 13px; font-weight: 700; color: #FFD9D2; }
+QLabel#ToastSub   { font-size: 11px; color: @TEXT_DIM@; }
+QPushButton#ToastClose {
+    background: transparent;
+    color: @TEXT_DIM@;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    padding: 0;
+}
+QPushButton#ToastClose:hover { background: rgba(255, 255, 255, 25); color: @TEXT@; }
 """
 
 
