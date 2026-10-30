@@ -13,10 +13,11 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
 from core.config import load_config
+from core.paths import resource_dir
 from ui import theme
 from ui.main_window import MainWindow
 
@@ -50,6 +51,9 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("安全帽佩戴检测系统")
     app.setFont(QFont("Microsoft YaHei", 10))
+    icon_path = resource_dir() / "assets" / "app.ico"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))      # 窗口/任务栏图标
     # 全局套用设计令牌（对话框等顶层窗口也能跟着变成暗色）
     app.setStyleSheet(theme.stylesheet())
 

@@ -111,8 +111,10 @@ python evaluate.py --model runs/detect/xxx/weights/best.pt    # 指定模型
 
 ![桌面程序界面](docs/images/04_desktop_ui.png)
 
+现代科技风暗黑布局：左侧纯黑视频区，右侧竖排「运行控制 / 实时性能监测 / 报警事件」三张卡片，左右 7:3。
+
 ```bash
-python desktop.py                    # 打开界面，再点按钮选采集源
+python desktop.py                    # 打开界面，再选数据源
 python desktop.py --source 0         # 直接开摄像头 0 并自动开始检测
 python desktop.py --source demo.mp4  # 直接播视频文件
 python desktop.py --source photo.jpg # 检测单张图片
@@ -121,13 +123,11 @@ python desktop.py --source rtsp://192.168.1.10:554/stream
 
 功能：
 
-- 四种采集源：**摄像头 / 视频文件 / 图片 / RTSP 流**；
-- 实时画面上叠加检测框（head 红框 = 未戴安全帽，helmet 蓝框 = 已佩戴）；
-- 右栏显示运行状态、帧率、单帧耗时、本帧目标数、各类计数；
-- **报警闭环**：连续 N 帧确认（默认 3 帧，去掉单帧误报）→ 状态变红 + 声音提示 + 自动抓拍 + 事件写入 CSV；
-- 报警事件列表**双击即可打开对应抓拍**；
-- 「截图」保存当前帧，「事件表」直接定位到 `captures/events.csv`；
-- 「设置」里调模型路径、置信度阈值、报警灵敏度、抓拍目录，写回 `configs/default.yaml`；
+- 四种采集源：**摄像头 / 视频文件 / 图片 / RTSP 流**——点数据源按钮即选（摄像头问序号、视频/图片选文件、RTSP 填地址）；
+- 实时画面叠加检测框（head 红框 = 未戴安全帽，helmet 蓝框 = 已佩戴），左上角悬浮显示运行状态、FPS、当前模型；
+- 「实时性能监测」实时刷新帧率、单帧耗时、本帧目标数；
+- 单张图片处理完会保留结果画面，不用自己截；
+- 「截图」保存当前帧，「打开事件表」定位到 `captures/events.csv`，「设置」可调阈值 / 推理后端 / 抓拍目录；
 - 快捷键：`F5` 开始、`F6` 停止、`Ctrl+S` 截图。
 
 报警产物默认存在 `captures/`（已在 .gitignore 中忽略）：
@@ -232,10 +232,12 @@ hat_detector/
 │  ├─ postprocess.py      #   跨类别去重、分类计数
 │  └─ alarm.py            #   报警去抖 + 抓拍 + 声音 + 事件 CSV
 ├─ ui/                    # ★ PySide6 界面层
-│  ├─ main_window.py      #   主窗口（工具栏 / 画面 / 信息栏 / 状态栏）
+│  ├─ theme.py            #   设计令牌 + QSS（暗黑配色 / 圆角 / 字号层级）
+│  ├─ widgets.py          #   卡片 / 状态灯 / 指标行 / 数据源切换 / 视频区 / 报警条目
+│  ├─ main_window.py      #   主窗口（7:3 分栏 + 三卡片，接入检测管线）
 │  ├─ video_view.py       #   等比缩放的视频控件
-│  ├─ side_panel.py       #   状态、性能、计数、事件列表
 │  └─ settings_dialog.py  #   设置面板
+├─ assets/                # 程序图标 app.ico（由 scripts/make_icon.py 生成）
 ├─ app.py                 # Gradio 网页版（图片检测 + 浏览器摄像头实时检测）
 ├─ demo.py                # 轻量命令行/实时演示（超简单版）
 ├─ demo_opencv.py         # OpenCV 实时窗口（异步读帧 + FPS/HUD + 连续帧报警）
@@ -248,7 +250,8 @@ hat_detector/
 │  ├─ check_dataset.py    # 数据集体检
 │  ├─ make_2class.py      # 从 3 类派生二分类数据集
 │  ├─ export.py           # best.pt -> best.onnx
-│  └─ benchmark_backends.py  # torch / onnx 速度与一致性对比
+│  ├─ benchmark_backends.py  # torch / onnx 速度与一致性对比
+│  └─ make_icon.py        # 生成程序图标 assets/app.ico
 ├─ packaging/
 │  └─ build.ps1           # PyInstaller 打包脚本（含裁剪无用 Qt 组件）
 ├─ docs/

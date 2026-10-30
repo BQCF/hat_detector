@@ -26,16 +26,20 @@ class Card(QFrame):
         self.body.setContentsMargins(16, 14, 16, 16)
         self.body.setSpacing(12)
 
+        self.title_label: QLabel | None = None
+        self.hint_label: QLabel | None = None     # 标题右侧的小字，外部可改
         if title:
             head = QHBoxLayout()
             head.setContentsMargins(0, 0, 0, 0)
             head.setSpacing(8)
             lab = QLabel(title)
             lab.setObjectName("CardTitle")
+            self.title_label = lab
             head.addWidget(lab)
             if hint:
                 h = QLabel(hint)
                 h.setObjectName("CardHint")
+                self.hint_label = h
                 head.addStretch(1)
                 head.addWidget(h)
             self.body.addLayout(head)
@@ -256,6 +260,7 @@ class VideoArea(QFrame):
     # ---- 对外 ----
     def set_running(self, running: bool) -> None:
         self._tags.setVisible(running)
+        self._tags.raise_()                # 切到视频层后要重新提到最上层
         self._placeholder.set_subtitle(
             "正在连接数据源…" if running else "在右侧选择数据源后点击「开始检测」")
 
@@ -272,15 +277,18 @@ class VideoArea(QFrame):
             f"color:{color};background:rgba(0,0,0,140);"
             f"border:1px solid rgba(255,255,255,30);border-radius:6px;padding:4px 10px;")
         self._tags.adjustSize()          # 文案变了要重新量尺寸，否则会被截断
+        self._tags.raise_()
 
     def set_frame(self, frame_bgr) -> None:
         """第二步接入：把 BGR 帧喂进来就切到视频层。"""
         self.view.set_frame(frame_bgr)
         self._stack.setCurrentWidget(self.view)
+        self._tags.raise_()              # 视频层会盖住悬浮标签，必须重新置顶
 
     def reset_view(self) -> None:
         self.view.clear_frame()
         self._stack.setCurrentWidget(self._placeholder)
+        self._tags.raise_()
 
     # ---- 布局 ----
     def resizeEvent(self, event) -> None:                     # noqa: N802
