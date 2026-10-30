@@ -28,6 +28,7 @@ if (-not (Test-Path "models\best.onnx")) {
 & $py -m PyInstaller --noconfirm --clean `
     --onedir --noconsole `
     --name hat_detector `
+    --icon "$proj\assets\app.ico" `
     --distpath dist --workpath build --specpath packaging `
     --add-data "$proj\models\best.onnx;models" `
     --add-data "$proj\assets;assets" `
