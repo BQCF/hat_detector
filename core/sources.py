@@ -180,3 +180,31 @@ def enumerate_cameras(max_index: int = 6) -> list[int]:
             found.append(i)
         cap.release()
     return found
+
+
+def list_cameras(max_index: int = 8) -> list[tuple[int, str]]:
+    """枚举可用摄像头，返回 [(index, 显示名)]。
+
+    优先用 pygrabber（DirectShow）拿设备友好名（如 "XiaoMi Webcam"），拿不到
+    就退回"摄像头 N（WxH）"。index 与 cv2.VideoCapture(i, CAP_DSHOW) 一一对应。
+    """
+    names: dict[int, str] = {}
+    try:
+        from pygrabber.dshow_graph import FilterGraph
+        names = {i: n for i, n in enumerate(FilterGraph().get_input_devices())}
+    except Exception:
+        names = {}
+
+    out: list[tuple[int, str]] = []
+    for i in range(max_index):
+        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        base = names.get(i) or f"摄像头 {i}"
+        label = f"{base}（{w}x{h}）" if w and h else base
+        out.append((i, label))
+        cap.release()
+    return out

@@ -20,6 +20,7 @@ from core.config import AppConfig, save_config
 from core.pipeline import PipelineResult
 from core.report import export_events_excel
 from core.roi import RoiRegion
+from core.sources import list_cameras
 from core.stream import Stream
 
 from . import theme
@@ -253,12 +254,33 @@ class MainWindow(QMainWindow):
         self._last = None
 
     def _add_camera(self) -> None:
-        idx, ok = QInputDialog.getInt(self, "添加摄像头", "摄像头序号（0 通常是内置摄像头）：", 0, 0, 8)
-        if not ok:
+        res = self._choose_camera()
+        if res is None:
             return
-        self.cfg.cameras.append({"name": f"摄像头 {idx}",
-                                 "source_type": "camera", "source_value": str(idx)})
+        idx, label = res
+        name = label.split("（")[0]          # 去掉分辨率后缀，作频道名
+        self.cfg.cameras.append({"name": name, "source_type": "camera",
+                                 "source_value": str(idx)})
         self._commit_cameras()
+
+    def _choose_camera(self):
+        """枚举可用摄像头并弹列表选择，返回 (index, 显示名) 或 None（取消）。"""
+        cams = list_cameras()
+        if cams:
+            labels = [name for _, name in cams]
+            cur = 0
+            if str(self.cfg.source_value).isdigit():
+                cur = next((k for k, (i, _) in enumerate(cams)
+                            if i == int(self.cfg.source_value)), 0)
+            label, ok = QInputDialog.getItem(self, "选择摄像头", "可用的本地摄像头：",
+                                             labels, cur, False)
+            if not ok:
+                return None
+            return cams[labels.index(label)]
+        idx, ok = QInputDialog.getInt(self, "选择摄像头", "未枚举到摄像头，手动输入序号：", 0, 0, 8)
+        if not ok:
+            return None
+        return idx, f"摄像头 {idx}"
 
     def _add_rtsp(self) -> None:
         text, ok = QInputDialog.getText(self, "添加 RTSP", "流地址：", text="rtsp://")
@@ -367,11 +389,10 @@ class MainWindow(QMainWindow):
 
     def _pick_source(self, kind: str) -> bool:
         if kind == "camera":
-            cur = int(self.cfg.source_value) if str(self.cfg.source_value).isdigit() else 0
-            idx, ok = QInputDialog.getInt(self, "选择摄像头", "摄像头序号（0 通常是内置摄像头）：", cur, 0, 8)
-            if not ok:
+            res = self._choose_camera()
+            if res is None:
                 return False
-            self.cfg.source_value = str(idx)
+            self.cfg.source_value = str(res[0])
             return True
         if kind in ("video", "image"):
             if kind == "video":
