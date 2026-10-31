@@ -64,7 +64,7 @@
 
 ### 1.4 现场干扰：运动模糊最致命
 
-![鲁棒性](analysis/06_robustness.png)
+![鲁棒性](analysis/08_robustness.png)
 
 对 300 张测试图逐项施加干扰（其余条件不变），AP50 / 召回@conf0.25：
 
@@ -86,7 +86,7 @@
 
 ### 1.5 输入分辨率：640 是甜点，别再降
 
-![分辨率](analysis/07_imgsz.png)
+![分辨率](analysis/09_imgsz.png)
 
 | 推理尺寸 | head AP50 | helmet AP50 |
 | --- | --- | --- |

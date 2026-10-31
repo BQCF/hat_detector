@@ -1,7 +1,7 @@
 """鲁棒性体检：把测试集人为做坏（暗光/逆光/模糊/低分辨率/压缩/噪声），看精度掉多少。
 
 用来回答一个问题：「模型在自己数据集上只有 5% 的框错，为什么现场用起来错很多？」
-输出 docs/analysis/06_robustness.png、07_imgsz.png 与 runs/robustness/report.json
+输出 docs/analysis/08_robustness.png、09_imgsz.png 与 runs/robustness/report.json
 """
 from __future__ import annotations
 
@@ -200,7 +200,7 @@ def main():
     ax.set_axisbelow(True)
     ax.legend(facecolor=CARD, edgecolor="#252B36", labelcolor=FG, fontsize=8, loc="lower left")
     fig.tight_layout()
-    fig.savefig(ROOT / args.out / "06_robustness.png", dpi=150, facecolor=BG)
+    fig.savefig(ROOT / args.out / "08_robustness.png", dpi=150, facecolor=BG)
     plt.close(fig)
 
     # ---- 图 07：输入分辨率 ----
@@ -233,7 +233,7 @@ def main():
     ax.set_axisbelow(True)
     ax.legend(facecolor=CARD, edgecolor="#252B36", labelcolor=FG, fontsize=8)
     fig.tight_layout()
-    fig.savefig(ROOT / args.out / "07_imgsz.png", dpi=150, facecolor=BG)
+    fig.savefig(ROOT / args.out / "09_imgsz.png", dpi=150, facecolor=BG)
     plt.close(fig)
 
     out = ROOT / "runs/robustness/report.json"
