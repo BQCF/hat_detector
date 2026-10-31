@@ -13,6 +13,10 @@ captures/
 *.torchscript
 capture_*.jpg
 *.mp4
+_*.py
+_*.txt
+_*.png
+_*.jpg
 
 # ---------- Python ----------
 __pycache__/
