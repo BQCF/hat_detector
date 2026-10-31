@@ -12,7 +12,7 @@ from .paths import user_dir
 from .pipeline import InferPipeline, PipelineResult
 from .roi import RoiRegion
 from .sources import create_source
-from .tracker import IouTracker
+from .bytetrack import ByteTracker
 
 
 def safe_dir(name: str) -> str:
@@ -60,7 +60,10 @@ class Stream:
             self.alarm = AlarmManager(acfg, base_dir=user_dir(),
                                       on_alarm=self._wrap_alarm)
 
-            tracker = IouTracker(cfg.track.iou_thr, cfg.track.max_age) if cfg.track.enabled else None
+            tracker = (ByteTracker(track_thresh=0.5, det_thresh=0.1,
+                     match_thresh=cfg.track.iou_thr,
+                     max_time_lost=cfg.track.max_age)
+           if cfg.track.enabled else None)
             roi = RoiRegion.from_config(cfg.roi)
             self.pipeline = InferPipeline(self.detector, src, alarm=self.alarm,
                                           dedup=True, tracker=tracker, roi=roi)

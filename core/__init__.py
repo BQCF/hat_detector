@@ -7,6 +7,7 @@ from .pipeline import InferPipeline, PipelineResult
 from .postprocess import count_classes, cross_class_dedup
 from .sources import create_source, FrameSource
 from .tracker import IouTracker
+from .bytetrack import ByteTracker
 from .stream import Stream, safe_dir
 from .roi import RoiRegion
 from .report import export_events_excel
@@ -19,5 +20,5 @@ __all__ = [
     "count_classes", "cross_class_dedup",
     "create_source", "FrameSource",
     "RoiConfig", "TrackConfig", "IouTracker", "RoiRegion", "export_events_excel",
-    "Stream", "safe_dir",
+    "Stream", "safe_dir", "ByteTracker",
 ]
