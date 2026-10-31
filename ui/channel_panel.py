@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QListWidget,
 from . import theme
 from .widgets import StatusDot
 
-THUMB_W, THUMB_H = 168, 94
+THUMB_W, THUMB_H = 150, 84
 
 
 class ChannelItem(QWidget):
@@ -32,6 +32,21 @@ class ChannelItem(QWidget):
             f"border-radius:6px;color:{theme.TEXT_FAINT};font-size:11px;")
         row.addWidget(self.thumb)
 
+        # 删除按钮悬浮在缩略图右上角：不占布局宽度（窄面板里会被裁掉），
+        # 高对比底色保证在深色界面和任意画面上都看得见。
+        self.rm = QPushButton("×", self.thumb)
+        self.rm.setToolTip("删除此路")
+        self.rm.setFixedSize(20, 20)
+        self.rm.move(THUMB_W - 24, 3)
+        self.rm.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.rm.setStyleSheet(
+            "QPushButton{color:#FFFFFF;background:rgba(0,0,0,160);"
+            "border:1px solid rgba(255,255,255,80);border-radius:10px;"
+            "font-size:14px;font-weight:700;padding:0;}"
+            "QPushButton:hover{background:rgba(220,60,50,230);}")
+        self.rm.clicked.connect(self.remove_clicked.emit)
+        self.rm.raise_()
+
         col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(6)
@@ -42,18 +57,9 @@ class ChannelItem(QWidget):
         self.name_label = QLabel(name)
         self.name_label.setObjectName("ChannelName")
         self.name_label.setStyleSheet(f"color:{theme.TEXT};font-size:13px;font-weight:600;")
-        self.rm = QPushButton("×")
-        self.rm.setToolTip("删除此路")
-        self.rm.setFixedSize(18, 18)
-        self.rm.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.rm.setStyleSheet(
-            f"QPushButton{{color:{theme.TEXT_DIM};background:transparent;border:none;"
-            f"font-size:14px;}}QPushButton:hover{{color:{theme.DANGER};}}")
-        self.rm.clicked.connect(self.remove_clicked.emit)
         top.addWidget(self.dot)
         top.addWidget(self.name_label)
         top.addStretch(1)
-        top.addWidget(self.rm)
         col.addLayout(top)
         self.hint = QLabel("—")
         self.hint.setStyleSheet(f"color:{theme.TEXT_DIM};font-size:11px;")
@@ -80,8 +86,8 @@ class ChannelPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(248)
-        self.setMaximumWidth(320)
+        self.setMinimumWidth(260)
+        self.setMaximumWidth(360)
         self.setStyleSheet(f"background:{theme.CARD};border:1px solid {theme.BORDER};border-radius:8px;")
 
         root = QVBoxLayout(self)

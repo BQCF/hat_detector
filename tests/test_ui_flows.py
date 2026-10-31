@@ -55,3 +55,17 @@ def test_remove_stream_cancelled(qapp, monkeypatch):
     w = mw.MainWindow(cfg)
     w._remove_stream("大门")
     assert [c.get("name") for c in cfg.cameras] == ["大门", "车间"]   # 取消不删
+
+
+def test_channel_delete_button_emits_signal(qapp):
+    from ui.channel_panel import ChannelPanel, THUMB_W, THUMB_H
+    panel = ChannelPanel()
+    panel.add_channel("测试路")
+    item = panel._items["测试路"][1]
+    # 删除按钮悬浮在缩略图右上角、且在缩略图范围内
+    r = item.rm.geometry()
+    assert r.right() <= THUMB_W and r.bottom() <= THUMB_H
+    got = []
+    panel.remove_requested.connect(lambda n: got.append(n))
+    item.rm.click()                      # 模拟点删除
+    assert got == ["测试路"]
