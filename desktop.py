@@ -41,6 +41,8 @@ def main() -> int:
     parser.add_argument("--config", default="", help="配置文件路径（默认 configs/default.yaml）")
     parser.add_argument("--source", default="",
                         help="采集源：摄像头序号 / 视频 / 图片 / rtsp:// 地址；给了就自动开始检测")
+    parser.add_argument("--settings", action="store_true",
+                        help="启动后直接打开设置面板")
     args = parser.parse_args()
 
     cfg = load_config(args.config or None)
@@ -59,7 +61,9 @@ def main() -> int:
 
     win = MainWindow(cfg)
     win.show()
-    if args.source:
+    if args.settings:
+        QTimer.singleShot(300, win._open_settings)
+    elif args.source:
         # 给界面一帧时间画出来，再自动开始检测
         QTimer.singleShot(300, win._start)
     return app.exec()

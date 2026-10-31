@@ -217,6 +217,83 @@ QPushButton#ToastClose {
     padding: 0;
 }
 QPushButton#ToastClose:hover { background: rgba(255, 255, 255, 25); color: @TEXT@; }
+
+/* ---------- 对话框（设置 / 消息框 / 输入框） ----------
+   必须显式给 QDialog 设背景：它不会继承 QWidget#Root 的底色，
+   否则会变成系统浅色底 + 全局白字 = 白底白字看不清。 */
+QDialog, QMessageBox, QInputDialog, QFileDialog { background: @BG@; }
+QDialog QLabel, QMessageBox QLabel, QInputDialog QLabel { color: @TEXT@; }
+
+QGroupBox {
+    color: @TEXT_DIM@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    margin-top: 14px;
+    padding: 10px 10px 6px 10px;
+    font-size: 12px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0 5px;
+    color: @TEXT_DIM@;
+}
+
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+    background: @CARD_SOFT@;
+    color: @TEXT@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 18px;
+    selection-background-color: @ACCENT@;
+    selection-color: #FFFFFF;
+}
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+    border-color: @ACCENT@;
+}
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
+    color: @TEXT_FAINT@;
+    background: #14181E;
+}
+QComboBox::drop-down { border: none; width: 20px; }
+QComboBox QAbstractItemView {
+    background: @CARD@;
+    color: @TEXT@;
+    border: 1px solid @BORDER@;
+    selection-background-color: @ACCENT@;
+    selection-color: #FFFFFF;
+    outline: none;
+}
+
+QCheckBox { color: @TEXT@; spacing: 8px; }
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid @BORDER@;
+    background: @CARD_SOFT@;
+}
+QCheckBox::indicator:hover { border-color: @ACCENT@; }
+QCheckBox::indicator:checked {
+    background: @ACCENT@;
+    border-color: @ACCENT@;
+}
+
+/* 普通按钮（对话框里的保存/取消、浏览… 等） */
+QPushButton {
+    background: @CARD_SOFT@;
+    color: @TEXT@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-size: 13px;
+}
+QPushButton:hover { background: #232932; border-color: #303845; }
+QPushButton:pressed { background: #10141A; }
+QPushButton:disabled { color: @TEXT_FAINT@; background: #14181E; }
+QDialogButtonBox QPushButton { min-width: 76px; }
 """
 
 

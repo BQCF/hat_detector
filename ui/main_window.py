@@ -160,7 +160,8 @@ class MainWindow(QMainWindow):
             add_row.setSpacing(8)
             self.btn_add_cam = QPushButton("＋ 摄像头")
             self.btn_add_rtsp = QPushButton("＋ RTSP")
-            for b in (self.btn_add_cam, self.btn_add_rtsp):
+            self.btn_exit_multi = QPushButton("退出多路")
+            for b in (self.btn_add_cam, self.btn_add_rtsp, self.btn_exit_multi):
                 b.setObjectName("SegBtn")
                 b.setCursor(Qt.CursorShape.PointingHandCursor)
                 add_row.addWidget(b)
@@ -221,6 +222,7 @@ class MainWindow(QMainWindow):
         else:
             self.btn_add_cam.clicked.connect(self._add_camera)
             self.btn_add_rtsp.clicked.connect(self._add_rtsp)
+            self.btn_exit_multi.clicked.connect(self._exit_multi_mode)
         self.btn_shot.clicked.connect(self._screenshot)
         self.btn_events.clicked.connect(self._open_events)
         self.btn_export.clicked.connect(self._export_excel)
@@ -322,6 +324,11 @@ class MainWindow(QMainWindow):
             s.start()
 
     def _remove_stream(self, name: str) -> None:
+        ret = QMessageBox.question(self, "移除摄像头", f"确定移除「{name}」这一路吗？",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                   QMessageBox.StandardButton.No)
+        if ret != QMessageBox.StandardButton.Yes:
+            return
         self.cfg.cameras = [c for c in self.cfg.cameras if c.get("name") != name]
         save_config(self.cfg)
         if name in self._streams:
@@ -329,9 +336,8 @@ class MainWindow(QMainWindow):
             del self._streams[name]
         self.channels.remove_channel(name)
         if self._selected == name:
-            self._selected = next(iter(self._streams), None)
-        if self._streams and not self._selected:
-            self._selected = next(iter(self._streams))
+            remaining = self.channels.names()
+            self._selected = remaining[0] if remaining else None
 
     # ============================================================ 状态
     def _sync_state(self) -> None:
@@ -479,6 +485,24 @@ class MainWindow(QMainWindow):
         self._rebuild_ui()
         self._selected = name
         self._toast.popup("已进入多路模式", "点「＋摄像头 / ＋RTSP」继续添加")
+
+    def _exit_multi_mode(self) -> None:
+        """退出多路模式，保留当前选中的那一路作为单路源。"""
+        if self._running:
+            self._teardown(keep_view=False)
+        if self._selected:
+            for c in self.cfg.cameras:
+                if c.get("name") == self._selected:
+                    self.cfg.source_type = c.get("source_type", "camera")
+                    self.cfg.source_value = str(c.get("source_value", "0"))
+                    break
+        self.cfg.cameras = []
+        save_config(self.cfg)
+        self._camera_label = ""
+        self._camera_index = None
+        self._multi = False
+        self._rebuild_ui()
+        self._toast.popup("已退出多路模式", f"当前源 = {self._source_name()}")
 
     def _rebuild_ui(self) -> None:
         """模式切换后重建中央界面（单路 <-> 多路）。"""

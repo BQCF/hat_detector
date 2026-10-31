@@ -43,6 +43,7 @@ class ChannelItem(QWidget):
         self.name_label.setObjectName("ChannelName")
         self.name_label.setStyleSheet(f"color:{theme.TEXT};font-size:13px;font-weight:600;")
         self.rm = QPushButton("×")
+        self.rm.setToolTip("删除此路")
         self.rm.setFixedSize(18, 18)
         self.rm.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rm.setStyleSheet(
