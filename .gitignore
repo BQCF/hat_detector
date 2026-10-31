@@ -41,3 +41,6 @@ env/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 临时目录（冒烟测试/截图用）
+_tmp/

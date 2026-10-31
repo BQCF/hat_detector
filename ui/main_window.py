@@ -250,6 +250,13 @@ class MainWindow(QMainWindow):
         card.body.addWidget(self.metric_ms)
         card.body.addWidget(Divider())
         card.body.addWidget(self.metric_det)
+        card.body.addWidget(Divider())
+        # 稳定层状态：门控丢框数 + 时序投票是否在跑，方便判断"为什么没报"
+        self.metric_stab = QLabel("稳定层：--")
+        self.metric_stab.setStyleSheet(
+            f"font-size:11px;color:{theme.TEXT_DIM};border:none;background:transparent;")
+        self.metric_stab.setWordWrap(True)
+        card.body.addWidget(self.metric_stab)
         return card
 
     def _build_event_card(self) -> Card:
@@ -369,6 +376,7 @@ class MainWindow(QMainWindow):
         self.metric_fps.set_value("--")
         self.metric_ms.set_value("--")
         self.metric_det.set_value("--")
+        self.metric_stab.setText("稳定层：--")
         if self.card_perf.hint_label:
             self.card_perf.hint_label.setText("待机")
 
@@ -618,6 +626,7 @@ class MainWindow(QMainWindow):
                     self.metric_fps.set_value(f"{res.fps:.0f}" if res.fps > 0 else "--")
                     self.metric_ms.set_value(f"{res.infer_ms:.1f}")
                     self.metric_det.set_value(str(len(res.detections)))
+                    self._sync_stab_label(s, res)
                     self.video.set_tags(fps=res.fps, model=self._model_label,
                                         alarming=res.alarming)
                     if bool(res.alarming) != self._alarming:
@@ -625,6 +634,26 @@ class MainWindow(QMainWindow):
                         self._sync_state()
 
         self._update_channel_status()
+
+    def _sync_stab_label(self, s: Stream, res: PipelineResult) -> None:
+        """显示稳定层状态：门控有没有开、本帧丢了几框、投票锁定了几个目标。"""
+        parts = []
+        gate = getattr(s, "gate", None)
+        if gate is not None:
+            parts.append(f"门控丢 {res.gated_out} 框")
+        elif self.cfg.gate.enabled:
+            parts.append("门控未就绪")
+        stab = getattr(s, "stabilizer", None)
+        if stab is not None:
+            info = stab.stats()
+            st = info.get("stable") or {}
+            locked = sum(st.values())
+            if locked:
+                detail = " ".join(f"{k}{v}" for k, v in st.items())
+                parts.append(f"投票锁定 {locked}（{detail}）")
+            else:
+                parts.append("投票锁定中…")
+        self.metric_stab.setText("稳定层：" + ("；".join(parts) if parts else "关"))
 
     def _frame_to_pixmap(self, frame_bgr) -> QPixmap:
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
