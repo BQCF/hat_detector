@@ -247,3 +247,45 @@ python scripts/fn_label_check.py
 - `runs/error_analysis_data2cls_test/error_stats.json`（逐图逐框错误明细，可直接做后续分析）
 - `runs/robustness/report.json`
 - `docs/analysis/01~07.png`
+
+---
+
+## 7. 阶段 ② 已落地（2026-11-01）
+
+针对"框一直闪"和"把物体认成人"，先做了两个不用重训的改动：
+
+| 改动 | 文件 | 作用 |
+| --- | --- | --- |
+| 时序类别投票 + 迟滞 | `core/stabilizer.py` | 同一 track 跨帧投票，≥80% 得票且连续 4 帧才允许改判；交替抖动序列实测 8 帧内锁定，之后零抖动 |
+| 人形门控 | `core/gate.py` + `scripts/export_person.py` | 用 COCO person 模型找人体框，不在人体框内的 head/helmet 直接丢弃 |
+| 跟踪器改为按位置关联 | `core/bytetrack.py` | `class_aware=False`（默认）：head/helmet 互换不再换 track id，否则投票攒不起来；需要严格按类关联可显式打开 |
+| 模型工厂 | `core/stream.py::make_extras` | 桌面版与 CLI 共用同一套（跟踪 / ROI / 门控 / 投票） |
+
+**门控实测（120 张工地测试图，逐框核对真值）**
+
+| 门控配置 | 真实目标损失 | 砍掉的误报 |
+| --- | --- | --- |
+| expand 0.06 / cover 0.5 / 找不到人就全丢 | 8.7% | 6 |
+| **expand 0.25 / cover 0.3 / 找不到人则全留（当前默认）** | **3.2%** | 3 |
+
+默认取损失最小的一组；`gate.enabled: false` 可一键关掉。
+
+**速度**：门控会话限 2 线程后，单帧推理中位数 34ms → 40ms（+6ms）。不限线程时两个 onnx 会话抢 CPU，会恶化到 170ms——和当初 torch/onnx 同进程互抢是同一个坑。
+
+**已知限制**：门控只能砍"不在人身上"的框。你截图里"眼镜/头发被认成安全帽"那个框**就在人身上**，门控管不了 —— 那类错只能靠负样本 + 旋转增强重训（阶段 ⑥）。
+
+**配置**（`configs/default.yaml`）
+
+```yaml
+gate:            # 人形门控
+  enabled: true
+  min_cover: 0.3
+  expand: 0.25
+  empty_policy: keep
+stab:            # 时序投票
+  enabled: true
+  switch_share: 0.8
+  switch_frames: 4
+```
+
+人形门控依赖 `models/person_yolov8n.onnx`（12MB，`python scripts/export_person.py` 生成，已被 .gitignore 排除）。

@@ -13,12 +13,32 @@ from .pipeline import InferPipeline, PipelineResult
 from .roi import RoiRegion
 from .sources import create_source
 from .bytetrack import ByteTracker
+from .gate import PersonGate
+from .stabilizer import ClassStabilizer
 
 
 def safe_dir(name: str) -> str:
     """把显示名转成可当目录名的安全串。"""
     s = re.sub(r"[^\w\-]", "_", str(name)).strip("_")
     return s or "stream"
+
+
+def make_extras(cfg: AppConfig, names: dict[int, str] | None = None, base_dir=None):
+    """按配置造出（跟踪器, ROI, 人形门控, 时序稳定器）——桌面版与 CLI 共用同一套。"""
+    tracker = (ByteTracker(track_thresh=0.5, det_thresh=0.1,
+                           match_thresh=cfg.track.iou_thr,
+                           max_time_lost=cfg.track.max_age)
+               if cfg.track.enabled else None)
+    roi = RoiRegion.from_config(cfg.roi)
+
+    gate = None
+    if cfg.gate.enabled:
+        gate = PersonGate(cfg.gate, base_dir=base_dir or user_dir())
+        if not gate.available:
+            gate = None                      # 模型缺失就静默降级，不影响主流程
+
+    stab = ClassStabilizer(cfg.stab, names=names) if cfg.stab.enabled else None
+    return tracker, roi, gate, stab
 
 
 class Stream:
@@ -32,6 +52,8 @@ class Stream:
         self.detector: Detector | None = None
         self.alarm: AlarmManager | None = None
         self.pipeline: InferPipeline | None = None
+        self.gate: PersonGate | None = None
+        self.stabilizer: ClassStabilizer | None = None
         self.error: str = ""
         self._finished = False
 
@@ -60,13 +82,13 @@ class Stream:
             self.alarm = AlarmManager(acfg, base_dir=user_dir(),
                                       on_alarm=self._wrap_alarm)
 
-            tracker = (ByteTracker(track_thresh=0.5, det_thresh=0.1,
-                     match_thresh=cfg.track.iou_thr,
-                     max_time_lost=cfg.track.max_age)
-           if cfg.track.enabled else None)
-            roi = RoiRegion.from_config(cfg.roi)
+            tracker, roi, gate, stab = make_extras(cfg, self.detector.names, user_dir())
+
+            self.gate = gate
+            self.stabilizer = stab
             self.pipeline = InferPipeline(self.detector, src, alarm=self.alarm,
-                                          dedup=True, tracker=tracker, roi=roi)
+                                          dedup=True, tracker=tracker, roi=roi,
+                                          gate=gate, stabilizer=stab)
             self.pipeline.start()
             self.error = ""
         except Exception as exc:                            # noqa: BLE001

@@ -49,7 +49,8 @@ def find_latest_model(root: Path | None = None) -> Path | None:
         cands += list((r / "runs" / "detect").glob("*/weights/best.*"))
         cands += list((r / "models").glob("*.onnx"))
         cands += list((r / "models").glob("*.pt"))
-    cands = [p for p in cands if p.suffix.lower() in (".pt", ".onnx")]
+    cands = [p for p in cands
+             if p.suffix.lower() in (".pt", ".onnx") and not p.name.startswith("person_")]
     cands.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return cands[0] if cands else None
 
@@ -91,7 +92,8 @@ class _TorchBackend:
 class _OnnxBackend:
     name = "onnx"
 
-    def __init__(self, model_path: Path, device: str, iou: float, max_det: int):
+    def __init__(self, model_path: Path, device: str, iou: float, max_det: int,
+                 threads: int = 0):
         import onnxruntime as ort
 
         self.iou = iou
@@ -103,7 +105,13 @@ class _OnnxBackend:
         else:
             self.device = "cpu"
             providers = ["CPUExecutionProvider"]
-        self.session = ort.InferenceSession(str(model_path), providers=providers)
+        so = ort.SessionOptions()
+        if threads and threads > 0:
+            # 进程里同时跑两个 onnx 会话时，各自默认抢占全部核心会互相拖慢，
+            # 给辅助会话（人形门控）限线程数能明显提速。
+            so.intra_op_num_threads = int(threads)
+            so.inter_op_num_threads = 1
+        self.session = ort.InferenceSession(str(model_path), sess_options=so, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
         self.names = self._read_names()
 

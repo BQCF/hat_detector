@@ -123,6 +123,7 @@ class STrack:
         self.mean, self.covariance = self.kf.update(self.mean, self.covariance, measurement)
         self.tlwh = _det_tlwh(det)
         self.score = det.conf
+        self.cls_name = det.cls_name          # 类别以最新一帧为准（时序投票在外层做）
         self.state = TrackState.Tracked
         self.is_activated = True
         self.time_since_update = 0
@@ -216,11 +217,15 @@ class ByteTracker:
     """
 
     def __init__(self, track_thresh: float = 0.5, det_thresh: float = 0.2,
-                 match_thresh: float = 0.3, max_time_lost: int = 30):
+                 match_thresh: float = 0.3, max_time_lost: int = 30,
+                 class_aware: bool = False):
         self.track_thresh = float(track_thresh)
         self.det_thresh = float(det_thresh)
         self.match_thresh = float(match_thresh)
         self.max_time_lost = int(max_time_lost)
+        # 默认按位置关联、不看类别：head/helmet 本来就会互相跳，
+        # 若让类别参与关联，一抖动就会换 track id，时序投票也就无从累积。
+        self.class_aware = bool(class_aware)
         self.frame_id = 0
         self.tracked: list[STrack] = []
         self.lost: list[STrack] = []
@@ -244,8 +249,8 @@ class ByteTracker:
         m = np.zeros((len(tracks), len(dets)))
         for i, t in enumerate(tracks):
             for j, d in enumerate(dets):
-                if d.cls_name != t.cls_name:
-                    m[i, j] = 0.0           # 类别不同直接不匹配
+                if self.class_aware and d.cls_name != t.cls_name:
+                    m[i, j] = 0.0           # 开了类别感知才按类别隔离
                 else:
                     m[i, j] = _iou_tlwh(t.pred_tlwh, _det_tlwh(d))
         return m

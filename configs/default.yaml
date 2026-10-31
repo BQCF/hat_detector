@@ -21,3 +21,38 @@ alarm:
   events_csv: captures/events.csv
   alarm_class: head
   max_snapshots: 2000
+  dedup_by_track: true
+
+track:
+  enabled: true
+  iou_thr: 0.3
+  max_age: 30
+
+roi:
+  enabled: false
+  points: []
+  only_inside: true
+
+# 人形门控：只保留"落在人体框内"的 head/helmet，砍掉凭空多出来的框
+# 需要 models/person_yolov8n.onnx（python scripts/export_person.py 生成）
+gate:
+  enabled: true
+  model_path: models/person_yolov8n.onnx
+  imgsz: 416
+  conf: 0.35
+  min_cover: 0.3
+  expand: 0.25
+  empty_policy: keep
+  threads: 2
+
+# 时序类别投票：同一个人跨帧定类别，消除"一会儿戴一会儿不戴"的闪烁
+stab:
+  enabled: true
+  window: 15
+  decay: 0.85
+  adopt_share: 0.7
+  switch_share: 0.8
+  switch_frames: 4
+  min_obs: 3
+  adopt_after: 8
+  forget_sec: 3.0

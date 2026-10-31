@@ -29,6 +29,7 @@ class PipelineResult:
     fps: float = 0.0
     timestamp: float = 0.0
     alarming: bool = False
+    gated_out: int = 0                 # 本帧被人形门控丢掉的框数
 
 
 class InferPipeline:
@@ -41,13 +42,15 @@ class InferPipeline:
 
     def __init__(self, detector: Detector, source: FrameSource,
                  alarm: AlarmManager | None = None, dedup: bool = True,
-                 tracker=None, roi=None):
+                 tracker=None, roi=None, gate=None, stabilizer=None):
         self.detector = detector
         self.source = source
         self.alarm = alarm
         self.dedup = dedup
         self.tracker = tracker
         self.roi = roi
+        self.gate = gate
+        self.stabilizer = stabilizer
 
         self._frame_q: queue.Queue = queue.Queue(maxsize=2)
         self._result_q: queue.Queue = queue.Queue(maxsize=2)
@@ -161,12 +164,25 @@ class InferPipeline:
     def _process(self, frame: np.ndarray) -> None:
         t0 = time.time()
         dets = self.detector.infer(frame)
-        infer_ms = (time.time() - t0) * 1000.0
 
         if self.dedup:
             dets = cross_class_dedup(dets, iou_thr=0.5)
+
+        # 人形门控：丢掉"不在人身上"的框（必须在跟踪之前，免得幽灵目标占 track id）
+        gated_out = 0
+        if self.gate is not None:
+            before = len(dets)
+            dets = self.gate.apply(frame, dets)
+            gated_out = before - len(dets)
+
         if self.tracker is not None:
             dets = self.tracker.update(dets)
+
+        # 时序投票：同一 track 跨帧定类别，消除闪烁与阈值边缘的来回跳
+        if self.stabilizer is not None:
+            dets = self.stabilizer.update(dets, now=time.time())
+
+        infer_ms = (time.time() - t0) * 1000.0
 
         # 危险区域：拆成区域内 / 区域外，只对区域内统计与报警
         h, w = frame.shape[:2]
@@ -200,5 +216,5 @@ class InferPipeline:
         result = PipelineResult(frame=annotated, detections=inside, counts=counts,
                                 track_stats=track_stats, roi_active=roi_active,
                                 infer_ms=infer_ms, fps=fps, timestamp=now,
-                                alarming=alarming)
+                                alarming=alarming, gated_out=gated_out)
         self._put_latest(self._result_q, result)

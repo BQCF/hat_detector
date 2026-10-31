@@ -67,7 +67,14 @@ def main() -> int:
     print(f"采集源: {cfg.source_type} -> {cfg.source_value}")
 
     alarm = AlarmManager(cfg.alarm, on_alarm=on_alarm)
-    pipe = InferPipeline(detector, source, alarm=alarm, dedup=True)
+    from core.stream import make_extras
+    tracker, roi, gate, stab = make_extras(cfg, detector.names)
+    if gate is not None:
+        print("门控  : 人形门控已启用（不在人体框内的目标会被丢弃）")
+    if stab is not None:
+        print("稳定  : 时序类别投票已启用（同一个人不再忽戴忽不戴）")
+    pipe = InferPipeline(detector, source, alarm=alarm, dedup=True,
+                         tracker=tracker, roi=roi, gate=gate, stabilizer=stab)
     pipe.start()
 
     n = 0

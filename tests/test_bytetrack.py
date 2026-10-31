@@ -63,12 +63,22 @@ def test_new_track_new_id():
     assert d[0].track_id == 2
 
 
-def test_class_aware_no_cross_match():
+def test_class_flip_keeps_same_track():
+    """head ↔ helmet 在同一位置互换时**不能**换 id——否则时序投票攒不起来。"""
     bt = ByteTracker()
     bt.update([_d(100, 100, 50, 50, 0.9, "head")])
     d = [_d(100, 100, 50, 50, 0.9, "helmet")]
     bt.update(d)
-    assert d[0].track_id == 2                 # 类别不同，不续 id
+    assert d[0].track_id == 1
+
+
+def test_class_aware_mode_isolates_classes():
+    """需要严格按类别关联时，可以显式打开 class_aware。"""
+    bt = ByteTracker(class_aware=True)
+    bt.update([_d(100, 100, 50, 50, 0.9, "head")])
+    d = [_d(100, 100, 50, 50, 0.9, "helmet")]
+    bt.update(d)
+    assert d[0].track_id == 2
 
 
 def test_low_score_recovers_existing_track():

@@ -8,6 +8,8 @@ from pathlib import Path
 import yaml
 
 from .paths import user_dir
+from .gate import GateConfig
+from .stabilizer import StabConfig
 
 BASE_DIR = user_dir()                                    # 可写根目录（打包后在 exe 旁边）
 DEFAULT_CONFIG_PATH = BASE_DIR / "configs" / "default.yaml"
@@ -63,6 +65,8 @@ class AppConfig:
     alarm: AlarmConfig = field(default_factory=AlarmConfig)
     roi: RoiConfig = field(default_factory=RoiConfig)
     track: TrackConfig = field(default_factory=TrackConfig)
+    gate: GateConfig = field(default_factory=GateConfig)
+    stab: StabConfig = field(default_factory=StabConfig)
     # 多路摄像头：每个元素是 {"name": 显示名, "source_type": camera/rtsp/video/image, "source_value": 序号或地址}
     cameras: list = field(default_factory=list)
 
@@ -73,7 +77,8 @@ class AppConfig:
 
 
 # AppConfig 里嵌套的子配置：加载时逐个实例化
-_NESTED = {"alarm": AlarmConfig, "roi": RoiConfig, "track": TrackConfig}
+_NESTED = {"alarm": AlarmConfig, "roi": RoiConfig, "track": TrackConfig,
+           "gate": GateConfig, "stab": StabConfig}
 
 
 def load_config(path: Path | str | None = None) -> AppConfig:
