@@ -2,7 +2,7 @@
 
 > 日期：2026-11-01　｜　分析对象：`runs/detect/hat_2cls_20261029_085425/weights/best.pt`
 > 分析方法：`scripts/error_analysis.py`（逐框拆错）+ `scripts/robustness_check.py`（人为施加现场干扰）+ `scripts/fn_label_check.py`（漏检单独放大）
-> 数据：`runs/error_analysis_test/error_stats.json`、`runs/robustness/report.json`，图在 `docs/analysis/`
+> 数据：`runs/error_analysis_data2cls_test/error_stats.json`、`runs/robustness/report.json`，图在 `docs/analysis/`
 
 ---
 
@@ -129,10 +129,23 @@
 ### 阶段 5 · 现场取证（最优先，半天到一天）
 
 **要做的事**
-1. 新增 `scripts/collect_scene.py`：从摄像头/视频按 0.5–1s 抽帧，采 200–300 张，覆盖"有人没戴、有人戴、空镜、逆光、走动、多人"。
+1. 抽帧采集 200–300 张，覆盖"有人没戴、有人戴、空镜、逆光、走动、多人"。
 2. 用现有模型**预标注**（生成 YOLO txt），你只需在标注工具里改错 → 省掉 80% 手工。
 3. 划出 **100 张现场测试集**（不参与训练，反复用来验收）、其余进训练池。
 4. 用现有模型在现场测试集上跑一遍 `evaluate.py` / `error_analysis.py` → 得到**真实的起点数字**。
+
+**已经写好的脚本（阶段 5 已交付）**
+
+```bash
+python scripts/collect_scene.py --list                       # 看本机摄像头序号
+python scripts/collect_scene.py --source 0 --count 200       # 采帧（带预览窗口，s/p/q 热键）
+python scripts/preannotate.py                                # 预标注 + 切分 + 生成 data/scene/data.yaml
+#  → 改标注，工具与规范见 docs/labeling_guide.md
+python evaluate.py --data data/scene/data.yaml --split test --json runs/eval_scene_before.json
+python scripts/error_analysis.py --data data/scene/data.yaml --split test
+```
+
+采集脚本会自动丢弃"和上一张几乎一样"的画面（否则 200 张里 190 张是空房间），并在结束时提醒张数够不够。
 
 **为什么先做这个**：现在所有数字都来自工地网图，跟你的场景不是一回事。不做这一步，后面任何优化都无法判断有没有用。
 
@@ -231,6 +244,6 @@ python scripts/fn_label_check.py
 ```
 
 产物：
-- `runs/error_analysis_test/error_stats.json`（逐图逐框错误明细，可直接做后续分析）
+- `runs/error_analysis_data2cls_test/error_stats.json`（逐图逐框错误明细，可直接做后续分析）
 - `runs/robustness/report.json`
 - `docs/analysis/01~07.png`

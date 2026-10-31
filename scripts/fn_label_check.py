@@ -16,7 +16,7 @@ plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 BG, CARD, FG = "#0F1115", "#171B22", "#E6E8EB"
 
-data = json.loads((ROOT / "runs/error_analysis_test/error_stats.json").read_text(encoding="utf-8"))
+data = json.loads((ROOT / "runs/error_analysis_data2cls_test/error_stats.json").read_text(encoding="utf-8"))
 img_dir = ROOT / "data/dataset_2cls/images/test"
 items = []
 for p in data["per_image"]:

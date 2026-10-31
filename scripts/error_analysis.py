@@ -91,6 +91,21 @@ def max_iou(box, others):
     return max([iou(box, o) for o in others], default=0.0)
 
 
+def resolve_dirs(data_yaml: Path, split: str):
+    """按 ultralytics 的 data.yaml 规则解析出图片目录与标签目录。"""
+    import yaml
+
+    data_yaml = data_yaml if data_yaml.is_absolute() else (ROOT / data_yaml)
+    cfg = yaml.safe_load(data_yaml.read_text(encoding="utf-8"))
+    base = Path(cfg.get("path", data_yaml.parent))
+    if not base.is_absolute():
+        base = (ROOT / base).resolve()
+    rel = Path(cfg[split])
+    img_dir = base / rel
+    lbl_dir = base / Path(*("labels" if p == "images" else p for p in rel.parts))
+    return img_dir, lbl_dir
+
+
 def crop_around(img: Image.Image, box, pad=0.7, target=340):
     x1, y1, x2, y2 = box[1:5]
     bw, bh = max(1, x2 - x1), max(1, y2 - y1)
@@ -122,6 +137,7 @@ def draw(ax, crop, ox, oy, gt, preds, title):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="runs/detect/hat_2cls_20261029_085425/weights/best.pt")
+    ap.add_argument("--data", default="data2cls.yaml")
     ap.add_argument("--split", default="test")
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--iou", type=float, default=0.45)
@@ -133,11 +149,11 @@ def main():
 
     out_dir = ROOT / args.out
     out_dir.mkdir(parents=True, exist_ok=True)
-    stats_dir = ROOT / "runs" / f"error_analysis_{args.split}"
+    stats_dir = ROOT / "runs" / f"error_analysis_{Path(args.data).stem}_{args.split}"
     stats_dir.mkdir(parents=True, exist_ok=True)
 
-    img_dir = ROOT / "data/dataset_2cls/images" / args.split
-    lbl_dir = ROOT / "data/dataset_2cls/labels" / args.split
+    img_dir, lbl_dir = resolve_dirs(ROOT / args.data, args.split)
+    print(f"数据集：{img_dir}")
     files = sorted(p for p in img_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
     if args.limit:
         files = files[: args.limit]
