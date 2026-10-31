@@ -32,6 +32,10 @@ if (-not (Test-Path "models\best.onnx")) {
     --distpath dist --workpath build --specpath packaging `
     --add-data "$proj\models\best.onnx;models" `
     --add-data "$proj\assets;assets" `
+    --hidden-import pygrabber.dshow_graph `
+    --hidden-import comtypes `
+    --hidden-import comtypes.client `
+    --hidden-import openpyxl `
     --exclude-module torch --exclude-module torchvision --exclude-module torchaudio `
     --exclude-module ultralytics --exclude-module ultralytics_thop `
     --exclude-module gradio --exclude-module gradio_client `
