@@ -58,6 +58,8 @@ class MainWindow(QMainWindow):
         self._model_label = "—"
         self._alarming = False
         self._tick_no = 0
+        self._camera_label = ""
+        self._camera_index = None
 
         self._alarm_bridge = _AlarmBridge()
         self._alarm_bridge.triggered.connect(self._on_alarm)
@@ -174,10 +176,24 @@ class MainWindow(QMainWindow):
             card.body.addWidget(src_label)
             self.sources = SourceSegments(self.SOURCES, current=self.cfg.source_type)
             card.body.addWidget(self.sources)
+
+            hint_row = QHBoxLayout()
+            hint_row.setContentsMargins(0, 0, 0, 0)
+            hint_row.setSpacing(6)
             self.source_hint = QLabel("")
             self.source_hint.setObjectName("CardHint")
             self.source_hint.setWordWrap(True)
-            card.body.addWidget(self.source_hint)
+            hint_row.addWidget(self.source_hint, 1)
+            self.btn_pick = QPushButton("选择…")
+            self.btn_pick.setObjectName("GhostBtn")
+            self.btn_pick.setCursor(Qt.CursorShape.PointingHandCursor)
+            hint_row.addWidget(self.btn_pick)
+            card.body.addLayout(hint_row)
+
+            self.btn_multi = QPushButton("进入多路模式")
+            self.btn_multi.setObjectName("GhostBtn")
+            self.btn_multi.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.body.addWidget(self.btn_multi)
 
         ghost_row = QHBoxLayout()
         ghost_row.setContentsMargins(0, 0, 0, 0)
@@ -200,6 +216,8 @@ class MainWindow(QMainWindow):
         self.btn_stop.clicked.connect(lambda: self._stop())
         if self.sources is not None:
             self.sources.changed.connect(self._on_source_changed)
+            self.btn_pick.clicked.connect(self._pick_current_source)
+            self.btn_multi.clicked.connect(self._enter_multi_mode)
         else:
             self.btn_add_cam.clicked.connect(self._add_camera)
             self.btn_add_rtsp.clicked.connect(self._add_rtsp)
@@ -369,7 +387,10 @@ class MainWindow(QMainWindow):
         kind = self.cfg.source_type
         value = str(self.cfg.source_value or "")
         if kind == "camera":
-            text = f"摄像头 {value}" if value.isdigit() else "本地摄像头"
+            if self._camera_label and self._camera_index == str(value):
+                text = self._camera_label
+            else:
+                text = f"摄像头 {value}" if value.isdigit() else "本地摄像头"
         elif kind in ("video", "image"):
             p = Path(value)
             text = p.name if value and p.exists() else "未选择文件 · 点「开始检测」时选择"
@@ -393,6 +414,8 @@ class MainWindow(QMainWindow):
             if res is None:
                 return False
             self.cfg.source_value = str(res[0])
+            self._camera_index = str(res[0])
+            self._camera_label = res[1]
             return True
         if kind in ("video", "image"):
             if kind == "video":
@@ -418,7 +441,7 @@ class MainWindow(QMainWindow):
     def _on_source_changed(self, kind: str) -> None:
         prev = self.cfg.source_type
         if kind == prev:
-            self._update_source_hint()
+            self._pick_current_source()      # 重复点当前源 → 重新选设备/文件
             return
         if self._running:
             self._teardown(keep_view=False)
@@ -426,6 +449,48 @@ class MainWindow(QMainWindow):
             self.cfg.source_type = kind
         else:
             self.sources.set_current(prev)
+        self._update_source_hint()
+
+    def _pick_current_source(self) -> None:
+        """单路模式：为当前数据源重新选择具体设备/文件。"""
+        if self._running:
+            self._teardown(keep_view=False)
+        if self._pick_source(self.cfg.source_type):
+            self._update_source_hint()
+
+    def _enter_multi_mode(self) -> None:
+        """把当前源加入 cameras 并切到多路模式。"""
+        if self._running:
+            self._teardown(keep_view=False)
+        kind = self.cfg.source_type
+        val = str(self.cfg.source_value or "")
+        if kind in ("video", "image") and not (val and Path(val).exists()):
+            QMessageBox.information(self, "进入多路模式", "当前没选好视频/图片文件，请先切换数据源。")
+            return
+        name = self._source_name()
+        existing = {c.get("name") for c in self.cfg.cameras}
+        base, i = name, 2
+        while name in existing:
+            name = f"{base} {i}"
+            i += 1
+        self.cfg.cameras.append({"name": name, "source_type": kind, "source_value": val})
+        save_config(self.cfg)
+        self._multi = True
+        self._rebuild_ui()
+        self._selected = name
+        self._toast.popup("已进入多路模式", "点「＋摄像头 / ＋RTSP」继续添加")
+
+    def _rebuild_ui(self) -> None:
+        """模式切换后重建中央界面（单路 <-> 多路）。"""
+        old = self.takeCentralWidget()
+        if old is not None:
+            old.deleteLater()
+        self._build_ui()
+        self._roi_editor = RoiEditor(self.video)
+        self._roi_editor.finished.connect(self._on_roi_finished)
+        self._roi_editor.cancelled.connect(lambda: None)
+        self._populate_channels()
+        self._sync_state()
         self._update_source_hint()
 
     # ============================================================ 启动 / 停止
