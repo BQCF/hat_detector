@@ -1,9 +1,21 @@
 # 安全帽佩戴检测系统（hat_detector）
 
 基于 YOLOv8 的安全帽佩戴检测：识别画面中的 **未戴安全帽的头部（head）** 与 **安全帽（helmet）**，
-提供网页端（上传图片 / 浏览器摄像头）与本地 OpenCV 实时窗口两种使用方式。
+提供 PySide6 桌面程序（主推）、无界面 CLI、Gradio 网页三种入口，共用同一套 `core/` 检测与报警实现。
 
 ![精度与数据](docs/images/01_quality_and_data.png)
+
+## 下载即用（Windows，免 Python）
+
+最新桌面版：[**Releases · v1.0.0**](https://github.com/BQCF/hat_detector/releases/tag/v1.0.0)
+
+下载 `hat_detector_win64.zip`（约 118MB）→ 解压到任意目录 → 双击 `hat_detector.exe`。
+纯 CPU 推理（onnxruntime），1280×720 约 10–25 FPS；抓拍与事件表写在 exe 同目录的 `captures/`。
+
+桌面版功能：摄像头设备枚举与选择、单路↔多路切换、ROI 危险区域、ByteTrack 逐人去重报警、
+**时序类别投票**（同一目标跨帧定类别，消除"一会儿戴一会儿不戴"的闪烁）、
+**人形门控**（丢弃不在人体框内的凭空误框）、报警抓拍 + `events.csv` + Excel 事件报告。
+
 
 ## 指标
 
