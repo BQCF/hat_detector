@@ -24,6 +24,14 @@ Write-Host "使用 Python: $py"
 if (-not (Test-Path "models\best.onnx")) {
     throw "缺少 models\best.onnx，请先运行  python scripts/export.py"
 }
+# 人形门控用的 COCO person 模型；缺了也能打包，只是门控会自动降级关闭
+$hasPerson = Test-Path "models\person_yolov8n.onnx"
+if (-not $hasPerson) {
+    Write-Host "警告: 缺少 models\person_yolov8n.onnx，打包后「人形门控」不可用" -ForegroundColor Yellow
+    Write-Host "      需要的话先运行 python scripts/export_person.py" -ForegroundColor Yellow
+}
+$extraData = @()
+if ($hasPerson) { $extraData += "--add-data"; $extraData += "$proj\models\person_yolov8n.onnx;models" }
 
 & $py -m PyInstaller --noconfirm --clean `
     --onedir --noconsole `
@@ -31,6 +39,8 @@ if (-not (Test-Path "models\best.onnx")) {
     --icon "$proj\assets\app.ico" `
     --distpath dist --workpath build --specpath packaging `
     --add-data "$proj\models\best.onnx;models" `
+    @extraData `
+    --add-data "$proj\configs;configs" `
     --add-data "$proj\assets;assets" `
     --hidden-import pygrabber.dshow_graph `
     --hidden-import comtypes `
